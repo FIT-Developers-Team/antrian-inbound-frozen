@@ -1,3 +1,14 @@
+/**
+ * DEPRECATED — backend Vercel + MotherDuck warisan.
+ *
+ * Produksi sudah berjalan di Supabase Edge Functions (`supabase/functions/`)
+ * dengan Postgres sebagai penyimpanan. File ini tidak dipanggil frontend mana
+ * pun, tidak ikut ter-deploy (lihat .vercelignore), dan hanya dipertahankan
+ * sebagai referensi rollback sesuai MIGRATION_RUNBOOK.md.
+ *
+ * Jangan menambah fitur di sini. Hapus setelah Supabase terbukti stabil dan
+ * hosting Vercel resmi dinonaktifkan.
+ */
 const { Pool } = require("pg");
 const fs = require("fs");
 const path = require("path");

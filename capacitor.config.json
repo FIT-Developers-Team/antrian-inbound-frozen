@@ -1,12 +1,12 @@
 {
   "appId": "id.astronauts.inboundcbt",
-  "appName": "Inbound CBT",
+  "appName": "Inbound Frozen",
   "webDir": "mobile-web",
   "server": {
-    "url": "https://antrian-inbound-cbt.vercel.app",
+    "url": "https://antrian-inbound-frozen.pages.dev",
     "cleartext": false,
     "allowNavigation": [
-      "antrian-inbound-cbt.vercel.app"
+      "antrian-inbound-frozen.pages.dev"
     ]
   }
 }

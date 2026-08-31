@@ -57,15 +57,36 @@ async function upsert(table, rows, conflict) {
 await loadEnv();
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error("Isi .env.supabase.local terlebih dahulu.");
 
-const csvRows = parseCsv(await fs.readFile(path.join(root, "data", "product_master.csv"), "utf8"));
-const headers = csvRows.shift().map((value) => value.trim().toLowerCase());
-const at = (name) => headers.indexOf(name);
-const products = csvRows.map((row) => ({ sku_number: row[at("sku_number")]?.trim(), product_name: row[at("product_name")]?.trim(),
-  product_id: row[at("product_id")]?.trim() || null })).filter((row) => row.sku_number && row.product_name);
+/** CSV -> array objek, dikunci pada nama kolom bukan urutan kolom. */
+async function readCsvRows(file) {
+  const rows = parseCsv(await fs.readFile(path.join(root, "data", file), "utf8"));
+  const headers = rows.shift().map((value) => value.trim().toLowerCase());
+  return rows.map((row) =>
+    Object.fromEntries(headers.map((header, index) => [header, (row[index] ?? "").trim()])),
+  );
+}
 
-const backend = await fs.readFile(path.join(root, "api", "inbound.js"), "utf8");
-const checkerBlock = backend.match(/const CHECKER_SEED = \[([\s\S]*?)\n\];/)?.[1] || "";
-const checkers = [...checkerBlock.matchAll(/\["([^"]+)",\s*"([^"]+)"\]/g)].map((match) => ({ mp_id: match[1], checker_name: match[2], active: true }));
+const products = (await readCsvRows("product_master.csv"))
+  .map((row) => ({
+    sku_number: row.sku_number,
+    product_name: row.product_name,
+    product_id: row.product_id || null,
+  }))
+  .filter((row) => row.sku_number && row.product_name);
+
+// Master checker kini tinggal di data/checker_master.csv. Sebelumnya nilai ini
+// di-scrape dari api/inbound.js, sehingga seeding bergantung pada backend lama
+// yang sudah tidak dipakai dan tidak ikut ter-deploy.
+const checkers = (await readCsvRows("checker_master.csv"))
+  .map((row) => ({
+    mp_id: row.mp_id,
+    checker_name: row.checker_name,
+    active: String(row.active || "true").toLowerCase() !== "false",
+  }))
+  .filter((row) => row.mp_id && row.checker_name);
+
+if (!products.length) throw new Error("data/product_master.csv kosong atau tidak terbaca.");
+if (!checkers.length) throw new Error("data/checker_master.csv kosong atau tidak terbaca.");
 
 await upsert("product_master", products, "sku_number");
 await upsert("checker_master", checkers, "mp_id");

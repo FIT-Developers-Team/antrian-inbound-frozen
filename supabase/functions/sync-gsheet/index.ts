@@ -5,6 +5,8 @@ const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SE
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+const BATCH_LIMIT = 100;
+
 function dateTime(value: unknown): string {
   if (!value) return "";
   const date = new Date(String(value));
@@ -59,6 +61,8 @@ function format(row: Record<string, unknown>): Record<string, unknown> {
     checker_duration_minutes: checker.minutes, gr_status: row.gr_status || "", done_gr_by: "", gr_wait_duration: gr.text,
     gr_wait_minutes: gr.minutes, inbound_sla_duration: inbound.text, inbound_sla_minutes: inbound.minutes,
     wa_ticket_status: "", wa_ticket_sent_at: "", wa_ticket_error: "", wa_ticket_target: "",
+    // Kolom gudang; Apps Script menambah header ini otomatis bila belum ada.
+    site_code: row.site_code || "",
   };
 }
 
@@ -67,34 +71,54 @@ Deno.serve(async (request) => {
   const expected = clean(Deno.env.get("SYNC_SECRET"));
   const supplied = clean(request.headers.get("authorization")).replace(/^Bearer\s+/i, "");
   if (!expected || !constantTimeEqual(expected, supplied)) return jsonResponse(request, 401, { ok: false, message: "Unauthorized" });
+
+  let claimedIds: string[] = [];
   try {
     const target = clean(Deno.env.get("GSHEET_SYNC_URL"));
     if (!target || ["0", "false", "off"].includes(clean(Deno.env.get("GSHEET_SYNC_ENABLED")).toLowerCase())) {
       return jsonResponse(request, 200, { ok: true, data: { enabled: false, queued: 0, synced: 0 } });
     }
-    const { data: pending, error: pendingError } = await db.from("gsheet_sync_outbox").select("ticket_po_id,attempt_count")
-      .in("sync_status", ["PENDING", "FAILED"]).lt("attempt_count", 10).order("created_at").limit(100);
-    if (pendingError) throw pendingError;
-    const ids = (pending || []).map((row) => row.ticket_po_id);
-    if (!ids.length) return jsonResponse(request, 200, { ok: true, data: { enabled: true, queued: 0, synced: 0 } });
-    await db.from("gsheet_sync_outbox").update({ sync_status: "PROCESSING", updated_at: new Date().toISOString() }).in("ticket_po_id", ids);
-    const { data: rows, error: rowsError } = await db.from("inbound_operational_rows").select("*").in("ticket_po_id", ids);
-    if (rowsError) throw rowsError;
+
+    // Baris PROCESSING yang menggantung karena function timeout harus kembali
+    // antre; tanpa ini baris tersebut terkunci selamanya di luar filter worker.
+    const { data: reaped } = await db.rpc("inbound_reap_stuck_gsheet", { p_older_than: "10 minutes" });
+
+    // Satu round-trip: klaim batch (FOR UPDATE SKIP LOCKED) sekaligus ambil rownya.
+    const { data: claim, error: claimError } = await db.rpc("inbound_claim_gsheet_batch", { p_limit: BATCH_LIMIT });
+    if (claimError) throw claimError;
+    claimedIds = (claim?.ticket_po_ids || []) as string[];
+    const rows = (claim?.rows || []) as Record<string, unknown>[];
+    if (!claimedIds.length) {
+      return jsonResponse(request, 200, { ok: true, data: { enabled: true, queued: 0, synced: 0, reaped: reaped ?? 0 } });
+    }
+
     const endpoint = new URL(target); endpoint.searchParams.set("action", "submitSecurity");
     const response = await fetch(endpoint, { method: "POST", redirect: "follow", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "submitSecurity", payload: { rows: (rows || []).map(format), send_whatsapp: false,
+      body: JSON.stringify({ action: "submitSecurity", payload: { rows: rows.map(format), send_whatsapp: false,
         wa_event: "DISABLED", sync_mode: "upsert", sync_key: "ticket_po_id", sync_secret: clean(Deno.env.get("GSHEET_SYNC_SECRET")) },
         timestamp: new Date().toISOString() }) });
     const result = await response.json().catch(() => null);
-    if (!response.ok || (result?.status && result.status !== "success")) throw new Error(result?.message || `Google Sheets sync HTTP ${response.status}`);
-    for (const id of ids) {
-      const current = pending!.find((row) => row.ticket_po_id === id) as Record<string, unknown> | undefined;
-      await db.from("gsheet_sync_outbox").update({ sync_status: "SYNCED", attempt_count: Number(current?.attempt_count || 0) + 1,
-        last_error: null, synced_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("ticket_po_id", id);
+    if (!response.ok || (result?.status && result.status !== "success")) {
+      throw new Error(result?.message || `Google Sheets sync HTTP ${response.status}`);
     }
-    return jsonResponse(request, 200, { ok: true, data: { enabled: true, queued: ids.length, synced: rows?.length || 0 } });
+
+    // Satu UPDATE untuk seluruh batch, bukan satu UPDATE per baris.
+    const { error: settleError } = await db.rpc("inbound_settle_gsheet_batch", {
+      p_ticket_po_ids: claimedIds, p_success: true, p_error: null,
+    });
+    if (settleError) throw settleError;
+    return jsonResponse(request, 200, { ok: true, data: {
+      enabled: true, queued: claimedIds.length, synced: rows.length, reaped: reaped ?? 0,
+    } });
   } catch (error) {
-    console.error("sync-gsheet", error);
-    return jsonResponse(request, 500, { ok: false, message: error instanceof Error ? error.message : "GSheet sync gagal" });
+    const message = error instanceof Error ? error.message : "GSheet sync gagal";
+    // Batch yang sudah diklaim harus dikembalikan ke FAILED agar dicoba ulang.
+    if (claimedIds.length) {
+      await db.rpc("inbound_settle_gsheet_batch", {
+        p_ticket_po_ids: claimedIds, p_success: false, p_error: message,
+      }).catch(() => {});
+    }
+    console.error("sync-gsheet", message);
+    return jsonResponse(request, 500, { ok: false, message });
   }
 });

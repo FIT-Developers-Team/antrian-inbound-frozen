@@ -58,6 +58,52 @@ function parseInboundDateSafe(value) {
   return isNaN(parsed.getTime()) ? null : parsed;
 }
 
+/**
+ * Nama merek yang tampil di header, tiket driver, layar TV, dan login.
+ * Selalu menyertakan gudang aktif supaya operator dan driver tahu lokasi
+ * mana yang sedang ditampilkan.
+ */
+function inboundBrandLabel() {
+  return globalThis.InboundSites?.brand?.() || "Inbound Frozen";
+}
+
+/**
+ * Nama gate lengkap ("PGS-GATE-INB-01-02") terlalu panjang untuk sel tabel dan
+ * kartu padat: teksnya pecah menjadi lima baris dan merusak tinggi baris.
+ * Tampilkan label ringkas ("PGS 02") dan simpan nama penuh di tooltip.
+ * Satu tiket bisa memakai lebih dari satu gate, dipisah koma.
+ */
+/** Label gate untuk layar TV: ringkas dan besar, nama penuh sebagai subteks. */
+function gateDisplayHtml(value, fallback = "-") {
+  const gates =
+    typeof parseGateList === "function"
+      ? parseGateList(value || "")
+      : String(value || "").split(",").map((gate) => gate.trim()).filter(Boolean);
+  if (!gates.length) return esc(fallback);
+  const short = gates
+    .map((gate) => globalThis.InboundSites?.gateLabel?.(gate) || gate)
+    .join(" · ");
+  return `<span class="tv-gate-short">${esc(short)}</span><span class="tv-gate-full">${esc(gates.join(", "))}</span>`;
+}
+
+function gateChipsHtml(value, fallback = "-") {
+  const gates =
+    typeof parseGateList === "function"
+      ? parseGateList(value || "")
+      : String(value || "").split(",").map((gate) => gate.trim()).filter(Boolean);
+  if (!gates.length) return esc(fallback);
+  return gates
+    .map((gate) => {
+      const short = globalThis.InboundSites?.gateLabel?.(gate) || gate;
+      return `<span class="gate-chip" title="${esc(gate)}">${esc(short)}</span>`;
+    })
+    .join(" ");
+}
+
+function inboundBrandFull() {
+  return globalThis.InboundSites?.brandFull?.() || "Antrian Inbound Frozen";
+}
+
 const state = {
   page: "daftar",
   loading: false,
@@ -76,10 +122,7 @@ const state = {
     security_status: ["WAITING"],
     checker_status: ["UNLOADING"],
     unload_sla: ["SLA OK", "SLA MISS", "ON PROCESS"],
-    gate: Array.from(
-      { length: 10 },
-      (_, i) => `Dock ${String(i + 1).padStart(2, "0")}`,
-    ),
+    gate: globalThis.InboundSites?.gateOptions?.() || [],
     vendor_name: [],
     po_number: [],
   },
@@ -112,8 +155,10 @@ const pageMeta = {
     subtitle: "Layar panggilan untuk TV/display",
   },
   monitor: {
-    title: "Waiting List Monitoring",
-    subtitle: "Report Security + Checker, SLA by fleet type",
+    // Disamakan dengan label sidebar dan judul kartu di halamannya sendiri;
+    // sebelumnya satu menu punya tiga nama berbeda.
+    title: "Waiting Monitor",
+    subtitle: "SLA, gate, dan bottleneck inbound",
   },
   commercial: {
     title: "COMERCIAL",
@@ -121,7 +166,7 @@ const pageMeta = {
   },
   laporan: {
     title: "Waiting List",
-    subtitle: "List input security, update gate/status dari checker",
+    subtitle: "Input security + update gate/status checker",
   },
   setting: { title: "Setting", subtitle: "Set API URL dan refresh data" },
   debug: {
@@ -139,7 +184,7 @@ const mobBase =
 const mobActive =
   "px-4 py-2 rounded-full text-label-sm bg-secondary-container text-on-secondary-container border border-secondary-container font-bold";
 
-const AUTH_STORAGE_KEY = "inbound_cbt_auth_user_v1";
+const AUTH_STORAGE_KEY = "inbound_frozen_auth_user_v1";
 
 const AUTH_USERS = [
   {
@@ -825,7 +870,7 @@ function getLastSecurityRowsForPrint() {
     return state.lastSecurityRows;
   }
   try {
-    const raw = localStorage.getItem("inbound_cbt_last_print_rows");
+    const raw = localStorage.getItem("inbound_frozen_last_print_rows");
     const rows = raw ? JSON.parse(raw) : [];
     return Array.isArray(rows) ? rows : [];
   } catch (err) {
@@ -1074,7 +1119,7 @@ function pageDriverTrack() {
   return `<div class="min-h-[calc(100vh-80px)] flex items-center justify-center p-4">
     <div class="glass-card rounded-2xl p-6 w-full max-w-[640px] border border-outline-variant/50">
       <div class="text-center mb-6">
-        <div class="text-[12px] uppercase tracking-[0.35em] text-on-surface-variant font-extrabold">Inbound CBT</div>
+        <div class="text-[12px] uppercase tracking-[0.35em] text-on-surface-variant font-extrabold">${inboundBrandLabel()}</div>
         <h1 class="text-2xl font-extrabold text-on-surface mt-2">Status Antrian Driver</h1>
         <div id="driver-track-live-badge" class="mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ${found ? "bg-success/10 text-success border border-success/30" : "bg-warning/10 text-warning border border-warning/30"}">${found ? "LIVE DATA" : "PREVIEW / BELUM SYNC"}</div>
       </div>
@@ -1352,7 +1397,7 @@ function printSecurityTickets(rowsOverride = null, winOverride = null) {
       state.lastSecurityRows = previewRows;
       try {
         localStorage.setItem(
-          "inbound_cbt_last_print_rows",
+          "inbound_frozen_last_print_rows",
           JSON.stringify(previewRows),
         );
       } catch (err) {}
@@ -1367,7 +1412,7 @@ function printSecurityTickets(rowsOverride = null, winOverride = null) {
   // Simpan baris actual terakhir supaya print manual berikutnya tetap konsisten.
   state.lastSecurityRows = rows;
   try {
-    localStorage.setItem("inbound_cbt_last_print_rows", JSON.stringify(rows));
+    localStorage.setItem("inbound_frozen_last_print_rows", JSON.stringify(rows));
   } catch (err) {}
 
   const now = formatDateTimeLocal(new Date());
@@ -1379,7 +1424,7 @@ function printSecurityTickets(rowsOverride = null, winOverride = null) {
       return `<div class="ticket">
         <div class="ticket-head">
           <div>
-            <div class="brand">Inbound CBT</div>
+            <div class="brand">${inboundBrandLabel()}</div>
             <div class="sub">Security Queue Ticket</div>
           </div>
           <div class="status">${esc(r.status || "WAITING")}</div>
@@ -2048,7 +2093,12 @@ function pronounceQueueNo(queueNo = "") {
 
 function pronounceGate(gate = "") {
   const text = String(gate || "").trim();
-  const sloc = text.match(/^(CBT|STL)-GATE-INB-01-0*([0-9]+)$/i);
+  const siteCodes = (window.InboundSites?.all?.() || [])
+    .map((site) => site.code)
+    .join("|") || "PGS";
+  const sloc = text.match(
+    new RegExp(`^(${siteCodes})-GATE-INB-01-0*([0-9]+)$`, "i"),
+  );
   if (sloc)
     return `${sloc[1].toUpperCase()} gate ${numberToIndoWords(sloc[2])}`;
   const match = text.match(/(Dock|Chiller)\s*0*([0-9]+)/i);
@@ -2330,7 +2380,7 @@ function updatePanggilDom() {
   const upcomingCount = document.getElementById("display-upcoming-count");
 
   if (queue) queue.textContent = latest.queue_no || "-";
-  if (dock) dock.textContent = latest.gate || "-";
+  if (dock) dock.innerHTML = gateDisplayHtml(latest.gate);
   if (driver) driver.textContent = latest.driver_name || "-";
   if (plate) plate.textContent = latest.plat_number || "-";
   if (vendor) vendor.textContent = latest.vendor_name || "-";
@@ -2354,7 +2404,7 @@ function pagePanggil() {
     <div class="relative z-10 h-full min-h-[calc(100vh-112px)] flex flex-col">
       <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 px-8 py-5 border-b border-outline-variant/30 bg-surface/35">
         <div>
-          <div class="text-[12px] uppercase tracking-[0.5em] text-on-surface-variant font-extrabold">Inbound CBT TV Monitor</div>
+          <div class="text-[12px] uppercase tracking-[0.5em] text-on-surface-variant font-extrabold">${inboundBrandLabel()} TV Monitor</div>
           <div class="text-3xl md:text-4xl font-extrabold text-primary mt-1">Panggilan Dock</div>
         </div>
         <div class="flex flex-wrap gap-2">
@@ -2380,7 +2430,7 @@ function pagePanggil() {
           <div class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-5xl">
             <div class="bg-primary-container text-on-primary-container rounded-2xl px-8 py-7 shadow-xl">
               <div class="text-[12px] uppercase tracking-[0.35em] font-extrabold opacity-80">Menuju</div>
-              <div id="display-dock" class="font-extrabold text-5xl md:text-6xl mt-2">${esc(last.gate || "-")}</div>
+              <div id="display-dock" class="tv-gate mt-2">${gateDisplayHtml(last.gate)}</div>
             </div>
             <div class="bg-surface-container/70 border border-outline-variant rounded-2xl px-8 py-7">
               <div class="text-[12px] uppercase tracking-[0.35em] font-extrabold text-on-surface-variant">Driver</div>
@@ -3361,7 +3411,7 @@ function unloadingEstimateReport(rows = []) {
               <td class="px-4 py-3 font-queue-id whitespace-nowrap">${esc(row.plat_number || "-")}</td>
               <td class="px-4 py-3 min-w-[180px]">${esc(row.vendor_name || "-")}</td>
               <td class="px-4 py-3 whitespace-nowrap font-bold">${esc(row.fleet_type || "-")}</td>
-              <td class="px-4 py-3 whitespace-nowrap">${esc(row.gate || "-")}</td>
+              <td class="px-4 py-3 whitespace-nowrap">${gateChipsHtml(row.gate)}</td>
               <td class="px-4 py-3 whitespace-nowrap">${monitorStatusBadge(row.status || "-")}</td>
               <td class="px-4 py-3 min-w-[220px] text-xs text-on-surface-variant">${esc(basis)}</td>
               <td class="px-4 py-3 whitespace-nowrap font-bold">${esc(info.targetLabel || "-")}</td>
@@ -3482,7 +3532,7 @@ function monitorUnifiedDetailRow(r = {}) {
     : showEstimate
       ? info.badgeClass
       : "bg-warning/10 text-warning border-warning/30";
-  return `<tr class="hover:bg-primary/5 ${rowClass}"><td class="px-4 py-3 font-queue-id text-primary whitespace-nowrap">${esc(r.queue_no || "-")}</td><td class="px-4 py-3 whitespace-nowrap">${monitorStatusBadge(st || "-")}</td><td class="px-4 py-3 min-w-[180px]">${esc(r.vendor_name || "-")}</td><td class="px-4 py-3 min-w-[120px]">${esc(r.driver_name || "-")}</td><td class="px-4 py-3 font-queue-id whitespace-nowrap">${esc(r.plat_number || "-")}</td><td class="px-4 py-3 min-w-[240px] break-all">${esc(r.po_number || "-")}</td><td class="px-4 py-3 whitespace-nowrap font-bold">${esc(r.fleet_type || "-")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(r.gate || "-")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(reg || "-")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(called || "-")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(start || "-")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(end || "-")}</td><td class="px-4 py-3 font-queue-id whitespace-nowrap ${isExpired ? "text-error" : "text-tertiary"} live-waiting-cell" data-live-waiting="1" data-created="${esc(reg || "")}" data-completed="${esc(waitingEnd || "")}" data-status="${esc(st)}">${esc(isExpired ? formatMinutesCompact(minutesBetweenValues(reg, waitingEnd)) : waitingText)}</td><td class="px-4 py-3 font-queue-id whitespace-nowrap ${info.outSla ? "text-error" : "text-tertiary"} live-waiting-cell" data-live-waiting="1" data-created="${esc(start || "")}" data-completed="${esc(end || "")}" data-status="${esc(st)}">${esc(unloadingText)}</td><td class="px-4 py-3 whitespace-nowrap font-bold">${esc(info.targetLabel || "-")}</td><td class="px-4 py-3 whitespace-nowrap font-queue-id text-primary">${esc(showEstimate ? info.estimateText || "-" : "-")}</td><td class="px-4 py-3 whitespace-nowrap font-queue-id ${deltaClass}" data-live-estimate-delta="1" data-estimate="${esc(showEstimate ? info.estimateText || "" : "")}" data-completed="${esc(end || "")}">${esc(deltaText)}</td><td class="px-4 py-3 whitespace-nowrap"><span class="inline-flex items-center px-3 py-1 rounded-full border text-xs font-bold ${slaClass}">${esc(slaLabel)}</span></td><td class="px-4 py-3 font-bold text-center">${esc(callCount)}</td><td class="px-4 py-3 whitespace-nowrap">${esc(wa)}</td></tr>`;
+  return `<tr class="hover:bg-primary/5 ${rowClass}"><td class="px-4 py-3 font-queue-id text-primary whitespace-nowrap">${esc(r.queue_no || "-")}</td><td class="px-4 py-3 whitespace-nowrap">${monitorStatusBadge(st || "-")}</td><td class="px-4 py-3 min-w-[180px]">${esc(r.vendor_name || "-")}</td><td class="px-4 py-3 min-w-[120px]">${esc(r.driver_name || "-")}</td><td class="px-4 py-3 font-queue-id whitespace-nowrap">${esc(r.plat_number || "-")}</td><td class="px-4 py-3 min-w-[240px] break-all">${esc(r.po_number || "-")}</td><td class="px-4 py-3 whitespace-nowrap font-bold">${esc(r.fleet_type || "-")}</td><td class="px-4 py-3 whitespace-nowrap">${gateChipsHtml(r.gate)}</td><td class="px-4 py-3 whitespace-nowrap">${esc(reg || "-")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(called || "-")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(start || "-")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(end || "-")}</td><td class="px-4 py-3 font-queue-id whitespace-nowrap ${isExpired ? "text-error" : "text-tertiary"} live-waiting-cell" data-live-waiting="1" data-created="${esc(reg || "")}" data-completed="${esc(waitingEnd || "")}" data-status="${esc(st)}">${esc(isExpired ? formatMinutesCompact(minutesBetweenValues(reg, waitingEnd)) : waitingText)}</td><td class="px-4 py-3 font-queue-id whitespace-nowrap ${info.outSla ? "text-error" : "text-tertiary"} live-waiting-cell" data-live-waiting="1" data-created="${esc(start || "")}" data-completed="${esc(end || "")}" data-status="${esc(st)}">${esc(unloadingText)}</td><td class="px-4 py-3 whitespace-nowrap font-bold">${esc(info.targetLabel || "-")}</td><td class="px-4 py-3 whitespace-nowrap font-queue-id text-primary">${esc(showEstimate ? info.estimateText || "-" : "-")}</td><td class="px-4 py-3 whitespace-nowrap font-queue-id ${deltaClass}" data-live-estimate-delta="1" data-estimate="${esc(showEstimate ? info.estimateText || "" : "")}" data-completed="${esc(end || "")}">${esc(deltaText)}</td><td class="px-4 py-3 whitespace-nowrap"><span class="inline-flex items-center px-3 py-1 rounded-full border text-xs font-bold ${slaClass}">${esc(slaLabel)}</span></td><td class="px-4 py-3 font-bold text-center">${esc(callCount)}</td><td class="px-4 py-3 whitespace-nowrap">${esc(wa)}</td></tr>`;
 }
 
 function monitorDetailRow(r = {}) {
@@ -3506,7 +3556,7 @@ function monitorDetailRow(r = {}) {
     <td class="px-4 py-3 min-w-[120px]">${esc(r.driver_name || "-")}</td>
     <td class="px-4 py-3 font-queue-id whitespace-nowrap">${esc(r.plat_number || "-")}</td>
     <td class="px-4 py-3 min-w-[240px] break-all">${esc(r.po_number || "-")}</td>
-    <td class="px-4 py-3 whitespace-nowrap">${esc(r.gate || "-")}</td>
+    <td class="px-4 py-3 whitespace-nowrap">${gateChipsHtml(r.gate)}</td>
     <td class="px-4 py-3 whitespace-nowrap">${esc(reg || "-")}</td>
     <td class="px-4 py-3 whitespace-nowrap">${esc(called || "-")}</td>
     <td class="px-4 py-3 whitespace-nowrap">${esc(start || "-")}</td>
@@ -3538,7 +3588,7 @@ function monitorRow(r) {
     <td class="px-4 py-3 text-sm min-w-[210px]">${esc(r.po_number || "-")}</td>
     <td class="px-4 py-3 font-bold">${esc(r.fleet_type || "-")}</td>
     <td class="px-4 py-3 font-queue-id">${esc(r.count_po_sku || 0)}</td>
-    <td class="px-4 py-3">${esc(r.gate || "-")}</td>
+    <td class="px-4 py-3">${gateChipsHtml(r.gate)}</td>
     <td class="px-4 py-3">${monitorStatusBadge(st)}</td>
     <td class="px-4 py-3 font-queue-id ${danger ? "text-error" : "text-tertiary"} live-waiting-cell" data-live-waiting="1" data-created="${esc(r.created_at || "")}" data-completed="${esc(r.completed_at || "")}" data-status="${esc(st)}">${esc(wait)}</td>
     <td class="px-4 py-3 font-bold">${esc(sla.label)}</td>
@@ -4473,7 +4523,7 @@ function checkerListRow(r, i) {
     <td class="px-4 py-3 text-sm min-w-[220px]">${esc(r.po_number || "-")}</td>
     <td class="px-4 py-3 font-queue-id text-sm">${esc(r.plat_number || "-")}</td>
     <td class="px-4 py-3">${esc(r.driver_name || "-")}</td>
-    <td class="px-4 py-3 min-w-[120px]">${esc(r.gate || "-")}</td>
+    <td class="px-4 py-3 min-w-[120px]">${gateChipsHtml(r.gate)}</td>
     <td class="px-4 py-3">${esc(st || "-")}</td>
     <td class="px-4 py-3 font-queue-id ${isCompleted ? "text-success" : isExpired ? "text-error" : "text-tertiary"} live-waiting-cell" data-live-waiting="1" data-created="${esc(r.created_at || "")}" data-completed="${esc(r.completed_at || "")}" data-status="${esc(st)}">${esc(wait)}</td>
   </tr>`;
@@ -4649,7 +4699,7 @@ function queueRow(q) {
     <td class="px-6 py-4 font-queue-id text-sm">${esc(q.plat_number || "-")}</td>
     <td class="px-6 py-4 text-sm">${esc(q.po_number || "-")}</td>
     <td class="px-6 py-4"><span class="px-3 py-1 rounded-full text-[10px] font-bold ${color} border">${esc(st || "-")}</span></td>
-    <td class="px-6 py-4">${esc(q.gate || "-")}</td>
+    <td class="px-6 py-4">${gateChipsHtml(q.gate)}</td>
     <td class="px-6 py-4 font-queue-id text-sm ${st.includes("WAIT") ? "text-tertiary" : "text-on-surface"} live-waiting-cell" data-live-waiting="1" data-created="${esc(q.created_at || "")}" data-completed="${esc(q.completed_at || "")}">${esc(q.waiting_text || liveWaitingText(q.created_at, q.completed_at))}</td>
     <td class="px-6 py-4">${num(q.total_po_qty || 0)}</td>
     <td class="px-6 py-4">${num(q.count_po_sku || 0)}</td>
@@ -5419,10 +5469,7 @@ function csvSafe(v) {
 }
 
 function getCibitungGateOptions() {
-  return Array.from(
-    { length: 10 },
-    (_, i) => `Dock ${String(i + 1).padStart(2, "0")}`,
-  );
+  return window.InboundSites?.gateOptions?.() || [];
 }
 
 function isTerminalQueueStatus(status = "") {
@@ -5607,10 +5654,7 @@ try {
    ========================================================= */
 
 function getCibitungGateOptions() {
-  return Array.from(
-    { length: 10 },
-    (_, i) => `Dock ${String(i + 1).padStart(2, "0")}`,
-  );
+  return window.InboundSites?.gateOptions?.() || [];
 }
 
 function getActiveGateSet(exclude = []) {
@@ -5849,7 +5893,7 @@ function checkerTicketCard(row = {}, i = 0) {
       </div>
       <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3">
         <div class="text-[10px] uppercase text-on-surface-variant font-bold">Gate</div>
-        <div class="font-bold text-sm mt-1">${esc(row.gate || "-")}</div>
+        <div class="font-bold text-sm mt-1">${gateChipsHtml(row.gate)}</div>
       </div>
       <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3">
         <div class="text-[10px] uppercase text-on-surface-variant font-bold">Driver</div>
@@ -5949,7 +5993,7 @@ function pageChecker() {
         <input type="hidden" name="queue_no" />
         <input type="hidden" name="status" value="CALLED" />
         <input type="hidden" name="unload_sla" value="ON PROCESS" />
-        <div class="grid grid-cols-1 gap-4">
+        <div class="flex flex-col gap-4">
           ${textInput("vendor_name", "Vendor Name", "Pilih dari card", "", "", "required readonly")}
           ${textInput("fleet_type", "Fleet Type", "Pilih dari card", "", "", "required readonly")}
           ${textInput("plat_number", "Plat Number", "Pilih dari card", "", "", 'required readonly onblur="validatePlateInput(this)"')}
@@ -6127,7 +6171,7 @@ function checkerTicketCard(row = {}, i = 0) {
       </div>
       <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3">
         <div class="text-[10px] uppercase text-on-surface-variant font-bold">Gate</div>
-        <div class="font-bold text-sm mt-1">${esc(row.gate || "-")}</div>
+        <div class="font-bold text-sm mt-1">${gateChipsHtml(row.gate)}</div>
       </div>
       <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3">
         <div class="text-[10px] uppercase text-on-surface-variant font-bold">Driver</div>
@@ -7734,7 +7778,7 @@ function securityFormMatchesRowsForPrint(rows = []) {
   window.pageCommercial = function pageCommercialV23() {
     const rows = filteredRows();
     return `<div class="commercial-tracker">
-      <section class="commercial-hero"><div><div class="commercial-eyebrow">INBOUND CBT / READ ONLY</div><h2>COMERCIAL Ticket Tracker</h2><p>Cari vendor atau PO dan pantau status yang sama dengan hasil scan QR driver.</p></div><button type="button" onclick="refreshDashboard()"><span class="material-symbols-outlined">refresh</span>Refresh Data</button></section>
+      <section class="commercial-hero"><div><div class="commercial-eyebrow">${inboundBrandLabel().toUpperCase()} / READ ONLY</div><h2>COMERCIAL Ticket Tracker</h2><p>Cari vendor atau PO dan pantau status yang sama dengan hasil scan QR driver.</p></div><button type="button" onclick="refreshDashboard()"><span class="material-symbols-outlined">refresh</span>Refresh Data</button></section>
       <section id="commercial-metrics" class="commercial-metrics">${metricsHtml()}</section>
       <section class="commercial-toolbar"><label class="commercial-search"><span class="material-symbols-outlined">search</span><input id="commercial-search" value="${esc(view.query)}" oninput="applyCommercialFilters()" placeholder="Cari PO, vendor, queue, plat, atau Ticket ID" autocomplete="off" /></label><label><span>Tanggal Tiket</span><div class="commercial-date-control"><input id="commercial-date-filter" type="date" value="${esc(view.date)}" onchange="applyCommercialFilters()" /><button type="button" onclick="clearCommercialDateFilter()" title="Tampilkan semua tanggal">Semua</button></div></label><label><span>Status</span><select id="commercial-status-filter" onchange="applyCommercialFilters()"><option value="ACTIVE" ${view.status === "ACTIVE" ? "selected" : ""}>Tiket Aktif</option><option value="ALL" ${view.status === "ALL" ? "selected" : ""}>Semua Status</option><option value="WAITING" ${view.status === "WAITING" ? "selected" : ""}>Waiting</option><option value="CALLED" ${view.status === "CALLED" ? "selected" : ""}>Dipanggil</option><option value="UNLOADING" ${view.status === "UNLOADING" ? "selected" : ""}>Bongkar</option><option value="GR" ${view.status === "GR" ? "selected" : ""}>Proses GR</option><option value="COMPLETED" ${view.status === "COMPLETED" ? "selected" : ""}>Selesai</option></select></label><label><span>Jenis Tiket</span><select id="commercial-type-filter" onchange="applyCommercialFilters()"><option value="ALL" ${view.type === "ALL" ? "selected" : ""}>REG + VIP</option><option value="REG" ${view.type === "REG" ? "selected" : ""}>REG</option><option value="VIP" ${view.type === "VIP" ? "selected" : ""}>VIP</option><option value="DROP-OFF" ${view.type === "DROP-OFF" ? "selected" : ""}>Drop-Off</option></select></label></section>
       <section class="commercial-workspace"><div id="commercial-list-panel" class="commercial-list-panel">${listHtml(rows)}</div><div id="commercial-detail-panel">${detailHtml(selectedRow(rows))}</div></section>
@@ -8374,7 +8418,7 @@ function securityFormMatchesRowsForPrint(rows = []) {
 
     return `<article class="checker-card rounded-2xl border border-outline-variant/40 bg-surface-container/45 p-4 shadow-sm" data-status="${esc(st)}" data-vendor="${esc(String(row.vendor_name || "").toLowerCase())}" data-queue="${esc(String(row.queue_no || "").toLowerCase())}" data-po="${esc(String(row.po_number || "").toLowerCase())}" data-plate="${esc(String(row.plat_number || "").toLowerCase())}">
       <div class="flex items-start justify-between gap-3"><div><div class="font-queue-id text-primary text-2xl">${esc(row.queue_no || "-")}</div><div class="text-[11px] uppercase text-on-surface-variant font-bold mt-1">${esc(row.vendor_name || "-")}</div></div><div class="flex flex-col items-end gap-1">${checkerStatusPill(st)}${isCalled ? callLimitBadge(row) : ""}</div></div>
-      <div class="grid grid-cols-2 gap-2 mt-4 text-xs"><div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Plat</div><div class="font-queue-id text-sm mt-1">${esc(row.plat_number || "-")}</div></div><div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Gate</div><div class="font-bold text-sm mt-1">${esc(row.gate || "-")}</div></div><div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Driver</div><div class="font-bold truncate mt-1">${esc(row.driver_name || "-")}</div></div><div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Menunggu</div><div>${waitMarkup}</div></div></div>
+      <div class="grid grid-cols-2 gap-2 mt-4 text-xs"><div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Plat</div><div class="font-queue-id text-sm mt-1">${esc(row.plat_number || "-")}</div></div><div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Gate</div><div class="font-bold text-sm mt-1">${gateChipsHtml(row.gate)}</div></div><div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Driver</div><div class="font-bold truncate mt-1">${esc(row.driver_name || "-")}</div></div><div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Menunggu</div><div>${waitMarkup}</div></div></div>
       <div class="mt-3 text-xs text-on-surface-variant"><div><b>Fleet:</b> ${esc(row.fleet_type || "-")}</div><div class="truncate"><b>PO:</b> ${esc(row.po_number || "-")}</div>${isUnloading ? `<div><b>Estimasi selesai:</b> ${esc(getEstimatedFinishedAt(row) || row.sla_finished_at || "-")}</div>` : ""}</div>
       <div class="mt-4 flex flex-wrap gap-2">${primaryButton}${callAction}${waButton}</div>
     </article>`;
@@ -9869,7 +9913,7 @@ window.initShader = function initShaderDisabled() {
                     <td class="wm-mono">${esc(row.plat_number || "-")}</td>
                     <td class="wm-mono wm-po">${esc(row.po_number || "-")}</td>
                     <td>${esc(row.fleet_type || "-")}</td>
-                    <td class="wm-gate-text">${esc(row.gate || "-")}</td>
+                    <td class="wm-gate-text">${gateChipsHtml(row.gate)}</td>
                     <td class="wm-mono">${esc(formatDateTimeShort(getTicketRegisterTimeV7(row)))}</td>
                     <td class="wm-mono">${esc(formatDateTimeShort(getTicketCalledTimeV7(row)))}</td>
                     <td class="wm-mono">${esc(formatDateTimeShort(getTicketStartUnloadingTimeV7(row)))}</td>
@@ -10431,7 +10475,7 @@ window.initShader = function initShaderDisabled() {
           <div class="login-visual-caption-v15">
             <img src="assets/login-logo.png" alt="Airo" class="login-logo-v15" />
             <div>
-              <div class="login-product-v15">Inbound CBT</div>
+              <div class="login-product-v15">${inboundBrandLabel()}</div>
               <div class="login-product-note-v15">Queue & receiving control</div>
             </div>
           </div>
@@ -10439,7 +10483,7 @@ window.initShader = function initShaderDisabled() {
         <div class="login-form-panel-v15">
           <div class="login-mobile-brand-v15">
             <img src="assets/login-logo.png" alt="Airo" />
-            <div><b>Inbound CBT</b><span>Operational Login</span></div>
+            <div><b>${inboundBrandLabel()}</b><span>Operational Login</span></div>
           </div>
           <div class="mb-7">
             <div class="text-[11px] uppercase tracking-[0.32em] text-primary font-extrabold">Secure Access</div>
@@ -10666,7 +10710,7 @@ window.initShader = function initShaderDisabled() {
       <div class="flex items-start justify-between gap-3"><div><div class="font-queue-id text-primary text-2xl">${esc(row.queue_no || "-")}</div><div class="text-[11px] uppercase text-on-surface-variant font-bold mt-1">${esc(row.vendor_name || "-")}</div></div>${checkerStatusPill(row.status)}</div>
       <div class="grid grid-cols-2 gap-2 mt-4 text-xs">
         <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Plat</div><div class="font-queue-id text-sm mt-1">${esc(row.plat_number || "-")}</div></div>
-        <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Gate</div><div class="font-bold text-sm mt-1">${esc(row.gate || "-")}</div></div>
+        <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Gate</div><div class="font-bold text-sm mt-1">${gateChipsHtml(row.gate)}</div></div>
         <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">PO</div><div class="font-bold mt-1">${poCount} PO</div></div>
         <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Menunggu</div><div>${waitMarkup}</div></div>
       </div>
@@ -10696,7 +10740,7 @@ window.initShader = function initShaderDisabled() {
           <input type="hidden" name="queue_no" />
           <input type="hidden" name="status" value="CALLED" />
           <input type="hidden" name="unload_sla" value="ON PROCESS" />
-          <div class="grid grid-cols-1 gap-4">
+          <div class="flex flex-col gap-4">
             ${textInput("vendor_name", "Vendor Name", "Pilih dari card", "", "", "required readonly")}
             ${textInput("fleet_type", "Fleet Type", "Pilih dari card", "", "", "required readonly")}
             ${textInput("plat_number", "Plat Number", "Pilih dari card", "", "", 'required readonly onblur="validatePlateInput(this)"')}
@@ -10957,7 +11001,7 @@ window.initShader = function initShaderDisabled() {
                 ? `<span class="text-xs font-bold text-warning">GR ${ticket.gr_progress || "0/0"}</span>`
                 : "-";
             const detailId = `waiting-detail-${String(ticket.ticket_id).replace(/[^A-Za-z0-9_-]/g, "_")}`;
-            return `<tr class="hover:bg-primary/5"><td class="px-4 py-3">${action}</td><td class="px-4 py-3"><button type="button" onclick="toggleWaitingDetailV16('${detailId}')" class="thin-tab rounded-lg px-3 py-2 text-xs font-bold">Detail PO</button></td><td class="px-4 py-3"><button onclick="printWaitingListTicket(${index})" class="thin-tab rounded-lg px-3 py-2 font-bold text-xs">Print</button></td><td class="px-4 py-3 text-sm whitespace-nowrap">${esc(ticket.created_at || "-")}</td><td class="px-4 py-3 font-queue-id text-primary">${esc(ticket.queue_no || "-")}</td><td class="px-4 py-3 min-w-[190px]">${esc(ticket.vendor_name || "-")}</td><td class="px-4 py-3">${esc(ticket.fleet_type || "-")}</td><td class="px-4 py-3 font-queue-id">${esc(ticket.plat_number || "-")}</td><td class="px-4 py-3">${ticket.po_rows?.length || 1}</td><td class="px-4 py-3">${esc(ticket.gate || "-")}</td><td class="px-4 py-3">${checkerStatusPill(status)}</td><td class="px-4 py-3 font-bold">${num(ticket.call_count || 0)}</td><td class="px-4 py-3 font-queue-id whitespace-nowrap">${esc(wait)}</td><td class="px-4 py-3">${num(ticket.total_po_qty || 0)}</td><td class="px-4 py-3 font-queue-id">${num(ticket.actual_quantity || 0)}</td><td class="px-4 py-3">${num(ticket.count_po_sku || 0)}</td><td class="px-4 py-3 whitespace-nowrap">${esc(ticket.checker_progress || "0/0")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(ticket.gr_progress || "0/0")}</td><td class="px-4 py-3 whitespace-nowrap"><span class="inline-flex rounded-full border px-2 py-1 text-xs font-bold ${sla.badgeClass}">${esc(sla.status)}</span></td></tr>
+            return `<tr class="hover:bg-primary/5"><td class="px-4 py-3">${action}</td><td class="px-4 py-3"><button type="button" onclick="toggleWaitingDetailV16('${detailId}')" class="thin-tab rounded-lg px-3 py-2 text-xs font-bold">Detail PO</button></td><td class="px-4 py-3"><button onclick="printWaitingListTicket(${index})" class="thin-tab rounded-lg px-3 py-2 font-bold text-xs">Print</button></td><td class="px-4 py-3 text-sm whitespace-nowrap">${esc(ticket.created_at || "-")}</td><td class="px-4 py-3 font-queue-id text-primary">${esc(ticket.queue_no || "-")}</td><td class="px-4 py-3 min-w-[190px]">${esc(ticket.vendor_name || "-")}</td><td class="px-4 py-3">${esc(ticket.fleet_type || "-")}</td><td class="px-4 py-3 font-queue-id">${esc(ticket.plat_number || "-")}</td><td class="px-4 py-3">${ticket.po_rows?.length || 1}</td><td class="px-4 py-3">${gateChipsHtml(ticket.gate)}</td><td class="px-4 py-3">${checkerStatusPill(status)}</td><td class="px-4 py-3 font-bold">${num(ticket.call_count || 0)}</td><td class="px-4 py-3 font-queue-id whitespace-nowrap">${esc(wait)}</td><td class="px-4 py-3">${num(ticket.total_po_qty || 0)}</td><td class="px-4 py-3 font-queue-id">${num(ticket.actual_quantity || 0)}</td><td class="px-4 py-3">${num(ticket.count_po_sku || 0)}</td><td class="px-4 py-3 whitespace-nowrap">${esc(ticket.checker_progress || "0/0")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(ticket.gr_progress || "0/0")}</td><td class="px-4 py-3 whitespace-nowrap"><span class="inline-flex rounded-full border px-2 py-1 text-xs font-bold ${sla.badgeClass}">${esc(sla.status)}</span></td></tr>
           <tr id="${detailId}" class="hidden waiting-detail-row-v15"><td colspan="19" class="p-0"><div class="waiting-detail-panel-v15"><div class="flex flex-wrap gap-4 mb-4 text-xs"><span><b>Created:</b> ${esc(ticket.created_at || ticket.register_time || "-")}</span><span><b>Driver:</b> ${esc(ticket.driver_name || "-")} · ${esc(ticket.driver_phone || ticket.phone_number || "-")}</span><span><b>Ticket:</b> ${esc(ticket.ticket_type || "REG")} · Slot ${esc(ticket.slot || "-")} · Gate ${esc(ticket.gate || "-")}</span><span><b>Start Unloading:</b> ${esc(ticket.start_unloading_at || "-")}</span><span><b>Finish Unloading:</b> ${esc(ticket.finish_unloading_at || "-")}</span><span><b>Checker:</b> ${esc(ticket.checker_progress || "0/0")}</span><span><b>GR:</b> ${esc(ticket.gr_progress || "0/0")}</span><span><b>WA Ticket:</b> ${esc(ticket.wa_ticket_status || ticket.po_rows?.[0]?.wa_ticket_status || "-")}</span><span><b>WA Handover:</b> ${esc(ticket.wa_handover_status || ticket.po_rows?.[0]?.wa_handover_status || "-")}</span></div><div class="overflow-x-auto"><table class="po-detail-table-v15"><thead><tr><th>PO Number</th><th>PO Qty</th><th>Actual Qty</th><th>SKU</th><th>Checker</th><th>Status Checker</th><th>Start Checker</th><th>Done Checker</th><th>GR Status</th><th>Done GR</th><th>SLA</th><th>Action</th></tr></thead><tbody>${waitingPoDetailRowsV15(ticket, role)}</tbody></table></div></div></td></tr>`;
           })
           .join("") ||
@@ -11131,7 +11175,7 @@ window.initShader = function initShaderDisabled() {
     const estimateText = row.start_unloading_at
       ? estimate.estimateText || row.sla_finished_at || "-"
       : "-";
-    return `<div class="min-h-[calc(100vh-80px)] flex items-center justify-center p-4"><div class="glass-card rounded-2xl p-5 sm:p-6 w-full max-w-[720px] border border-outline-variant/50"><div class="text-center mb-6"><div class="text-[12px] uppercase tracking-[0.35em] text-on-surface-variant font-extrabold">Inbound CBT</div><h1 class="text-2xl font-extrabold text-on-surface mt-2">Status Tiket Driver</h1><div id="driver-track-live-badge" class="mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ${found ? "bg-success/10 text-success border border-success/30" : "bg-warning/10 text-warning border border-warning/30"}">${found ? "LIVE DATA" : "PREVIEW / BELUM SYNC"}</div></div><div class="text-center border-y border-outline-variant/40 py-6"><div class="text-[12px] uppercase tracking-[0.45em] text-on-surface-variant font-extrabold">Nomor Antrian Anda</div><div class="font-queue-id text-[56px] sm:text-[76px] leading-none text-primary font-black mt-3">${esc(row.queue_no || "-")}</div></div><div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-5"><div class="rounded-xl bg-surface-container/50 border border-primary/20 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Status</div><div id="driver-track-status" class="font-bold text-2xl mt-2">${esc(status)}</div><div class="mt-1 text-xs font-bold text-on-surface-variant">Gate: <span id="driver-track-gate">${esc(row.gate || "-")}</span></div></div><div class="rounded-xl bg-surface-container/50 border border-tertiary/20 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Target SLA Inbound</div><div id="driver-track-est-finish" class="font-queue-id text-2xl text-tertiary mt-2">${esc(estimateText)}</div><div class="mt-1 text-xs text-on-surface-variant">Start unloading sampai seluruh PO DONE GR</div></div><div class="rounded-xl bg-surface-container/50 border border-outline-variant/30 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Checker Barang</div><div id="driver-track-checker-progress" class="font-queue-id text-xl mt-2">${esc(row.checker_progress || "0/0")}</div></div><div class="rounded-xl bg-surface-container/50 border border-outline-variant/30 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Proses GR</div><div id="driver-track-gr-progress" class="font-queue-id text-xl mt-2">${esc(row.gr_progress || "0/0")}</div></div><div class="rounded-xl bg-surface-container/50 border border-outline-variant/30 p-4 sm:col-span-2"><div class="text-[10px] uppercase font-bold text-on-surface-variant">SLA</div><div id="driver-track-sla-delta" class="font-queue-id text-xl mt-2 ${sla.status === "LATE" || sla.status === "SLA MISS" ? "text-error" : "text-success"}">${esc(sla.label || sla.status)}</div></div></div>${driverTimelineV15(row)}<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-5"><div class="rounded-xl border border-outline-variant/40 bg-surface-container/40 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Jam Menunggu</div><div id="driver-track-waiting" class="font-queue-id text-2xl text-tertiary mt-2">${esc(driverWaitingLabel(row))}</div></div><div class="rounded-xl border border-outline-variant/40 bg-surface-container/40 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Plat</div><div class="font-queue-id text-xl mt-2">${esc(row.plat_number || "-")}</div></div></div><div class="mt-4 rounded-xl border border-outline-variant/40 bg-surface-container/40 p-4 space-y-2 text-sm"><div><b>Driver:</b> ${esc(row.driver_name || "-")}</div><div><b>Vendor:</b> ${esc(row.vendor_name || "-")}</div><div><b>PO:</b> ${esc(row.po_number || "-")}</div><div><b>Last Refresh:</b> <span id="driver-track-last-refresh">${esc(driverTrackLastRefreshAt || "-")}</span></div></div>${status === "EXPIRED" ? `<div class="mt-4 rounded-xl border border-error/30 bg-error/10 p-4 text-error font-bold">Tiket expired. Driver wajib registrasi ulang.</div>` : ""}<button onclick="refreshDriverTrackLiveData(false)" class="mt-5 w-full bg-primary-container text-on-primary-container rounded-lg px-5 py-3 font-bold flex items-center justify-center gap-2"><span class="material-symbols-outlined">refresh</span>Refresh Status Sekarang</button></div></div>`;
+    return `<div class="min-h-[calc(100vh-80px)] flex items-center justify-center p-4"><div class="glass-card rounded-2xl p-5 sm:p-6 w-full max-w-[720px] border border-outline-variant/50"><div class="text-center mb-6"><div class="text-[12px] uppercase tracking-[0.35em] text-on-surface-variant font-extrabold">${inboundBrandLabel()}</div><h1 class="text-2xl font-extrabold text-on-surface mt-2">Status Tiket Driver</h1><div id="driver-track-live-badge" class="mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ${found ? "bg-success/10 text-success border border-success/30" : "bg-warning/10 text-warning border border-warning/30"}">${found ? "LIVE DATA" : "PREVIEW / BELUM SYNC"}</div></div><div class="text-center border-y border-outline-variant/40 py-6"><div class="text-[12px] uppercase tracking-[0.45em] text-on-surface-variant font-extrabold">Nomor Antrian Anda</div><div class="font-queue-id text-[56px] sm:text-[76px] leading-none text-primary font-black mt-3">${esc(row.queue_no || "-")}</div></div><div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-5"><div class="rounded-xl bg-surface-container/50 border border-primary/20 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Status</div><div id="driver-track-status" class="font-bold text-2xl mt-2">${esc(status)}</div><div class="mt-1 text-xs font-bold text-on-surface-variant">Gate: <span id="driver-track-gate">${esc(row.gate || "-")}</span></div></div><div class="rounded-xl bg-surface-container/50 border border-tertiary/20 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Target SLA Inbound</div><div id="driver-track-est-finish" class="font-queue-id text-2xl text-tertiary mt-2">${esc(estimateText)}</div><div class="mt-1 text-xs text-on-surface-variant">Start unloading sampai seluruh PO DONE GR</div></div><div class="rounded-xl bg-surface-container/50 border border-outline-variant/30 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Checker Barang</div><div id="driver-track-checker-progress" class="font-queue-id text-xl mt-2">${esc(row.checker_progress || "0/0")}</div></div><div class="rounded-xl bg-surface-container/50 border border-outline-variant/30 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Proses GR</div><div id="driver-track-gr-progress" class="font-queue-id text-xl mt-2">${esc(row.gr_progress || "0/0")}</div></div><div class="rounded-xl bg-surface-container/50 border border-outline-variant/30 p-4 sm:col-span-2"><div class="text-[10px] uppercase font-bold text-on-surface-variant">SLA</div><div id="driver-track-sla-delta" class="font-queue-id text-xl mt-2 ${sla.status === "LATE" || sla.status === "SLA MISS" ? "text-error" : "text-success"}">${esc(sla.label || sla.status)}</div></div></div>${driverTimelineV15(row)}<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-5"><div class="rounded-xl border border-outline-variant/40 bg-surface-container/40 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Jam Menunggu</div><div id="driver-track-waiting" class="font-queue-id text-2xl text-tertiary mt-2">${esc(driverWaitingLabel(row))}</div></div><div class="rounded-xl border border-outline-variant/40 bg-surface-container/40 p-4"><div class="text-[10px] uppercase font-bold text-on-surface-variant">Plat</div><div class="font-queue-id text-xl mt-2">${esc(row.plat_number || "-")}</div></div></div><div class="mt-4 rounded-xl border border-outline-variant/40 bg-surface-container/40 p-4 space-y-2 text-sm"><div><b>Driver:</b> ${esc(row.driver_name || "-")}</div><div><b>Vendor:</b> ${esc(row.vendor_name || "-")}</div><div><b>PO:</b> ${esc(row.po_number || "-")}</div><div><b>Last Refresh:</b> <span id="driver-track-last-refresh">${esc(driverTrackLastRefreshAt || "-")}</span></div></div>${status === "EXPIRED" ? `<div class="mt-4 rounded-xl border border-error/30 bg-error/10 p-4 text-error font-bold">Tiket expired. Driver wajib registrasi ulang.</div>` : ""}<button onclick="refreshDriverTrackLiveData(false)" class="mt-5 w-full bg-primary-container text-on-primary-container rounded-lg px-5 py-3 font-bold flex items-center justify-center gap-2"><span class="material-symbols-outlined">refresh</span>Refresh Status Sekarang</button></div></div>`;
   };
   pageDriverTrack = window.pageDriverTrack;
 
@@ -11743,23 +11787,12 @@ window.initShader = function initShaderDisabled() {
   if (window.__inboundV16FinalUiInstalled) return;
   window.__inboundV16FinalUiInstalled = true;
 
-  const GATES_V16 = [
-    "CBT-GATE-INB-01-01",
-    "CBT-GATE-INB-01-02",
-    "CBT-GATE-INB-01-03",
-    "CBT-GATE-INB-01-04",
-    "CBT-GATE-INB-01-05",
-    "CBT-GATE-INB-01-06",
-    "CBT-GATE-INB-01-07",
-    "CBT-GATE-INB-01-08",
-    "CBT-GATE-INB-01-09",
-    "STL-GATE-INB-01-01",
-    "STL-GATE-INB-01-02",
-    "STL-GATE-INB-01-03",
-    "STL-GATE-INB-01-04",
-    "STL-GATE-INB-01-05",
-    "STL-GATE-INB-01-06",
-  ];
+  // Gate tidak lagi hardcoded. Daftarnya berasal dari registry gudang
+  // (js/site_config.js) dan ditimpa katalog `site_master` dari backend, sehingga
+  // mengaktifkan SRG / BIT / CSI tidak memerlukan perubahan file ini.
+  function gatesForCurrentSite() {
+    return window.InboundSites?.gateOptions?.() || [];
+  }
 
   // ------------------------------------------------------------------------
   // AUTH FINAL
@@ -11886,14 +11919,14 @@ window.initShader = function initShaderDisabled() {
   // ------------------------------------------------------------------------
   // SLOT / GATE / DROP-OFF
   // ------------------------------------------------------------------------
-  window.getCibitungGateOptions = function getInboundGateSlocV16() {
-    return [...GATES_V16];
+  window.getCibitungGateOptions = function getInboundGateOptionsForSite() {
+    return gatesForCurrentSite();
   };
   try {
     getCibitungGateOptions = window.getCibitungGateOptions;
   } catch (error) {}
 
-  state.options.gate = [...GATES_V16];
+  state.options.gate = gatesForCurrentSite();
 
   window.buildSlotOptions = function buildSlotOptionsV16() {
     return ["1", "2", "3"];
@@ -12378,7 +12411,7 @@ window.initShader = function initShaderDisabled() {
     return `<div class="min-h-[calc(100vh-80px)] flex items-center justify-center p-4">
       <div class="glass-card rounded-2xl p-5 sm:p-6 w-full max-w-[720px] border border-outline-variant/50">
         <div class="text-center mb-6">
-          <div class="text-[12px] uppercase tracking-[0.35em] text-on-surface-variant font-extrabold">Inbound CBT</div>
+          <div class="text-[12px] uppercase tracking-[0.35em] text-on-surface-variant font-extrabold">${inboundBrandLabel()}</div>
           <h1 class="text-2xl font-extrabold text-on-surface mt-2">Status Tiket Driver</h1>
           <div id="driver-track-live-badge" class="mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ${found ? "bg-success/10 text-success border border-success/30" : "bg-warning/10 text-warning border border-warning/30"}">${found ? "LIVE DATA" : "PREVIEW / BELUM SYNC"}</div>
         </div>
@@ -13242,7 +13275,7 @@ window.initShader = function initShaderDisabled() {
       </div>
       <div class="grid grid-cols-2 gap-2 mt-4 text-xs">
         <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Plat</div><div class="font-queue-id text-sm mt-1">${esc(row.plat_number || "-")}</div></div>
-        <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Gate</div><div class="font-bold text-sm mt-1 break-all">${esc(row.gate || "-")}</div></div>
+        <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Gate</div><div class="font-bold text-sm mt-1 break-all">${gateChipsHtml(row.gate)}</div></div>
         <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Proses</div><div class="font-bold mt-1">${dropOff ? "DROP-OFF · tanpa Checker PO" : `${poCount} PO`}</div></div>
         <div class="rounded-lg bg-surface-container/60 border border-outline-variant/30 p-3"><div class="text-[10px] uppercase text-on-surface-variant font-bold">Menunggu</div><div>${waitMarkup}</div></div>
       </div>
@@ -13382,7 +13415,7 @@ window.initShader = function initShaderDisabled() {
           <input type="hidden" name="queue_no" />
           <input type="hidden" name="status" value="CALLED" />
           <input type="hidden" name="unload_sla" value="ON PROCESS" />
-          <div class="grid grid-cols-1 gap-4">
+          <div class="flex flex-col gap-4">
             ${textInput("vendor_name", "Vendor Name", "Pilih dari card", "", "", "required readonly")}
             ${textInput("fleet_type", "Fleet Type", "Pilih dari card", "", "", "required readonly")}
             ${textInput("plat_number", "Plat Number", "Pilih dari card", "", "", 'required readonly onblur="validatePlateInput(this)"')}
@@ -13742,7 +13775,7 @@ window.initShader = function initShaderDisabled() {
   if (window.__waitingListFiltersV181Installed) return;
   window.__waitingListFiltersV181Installed = true;
 
-  const STORAGE_KEY = "inbound_cbt_waiting_list_filters_v181";
+  const STORAGE_KEY = "inbound_frozen_waiting_list_filters_v1";
   const DEFAULT_FILTERS = {
     search: "",
     operationalDate: "",
@@ -14222,10 +14255,10 @@ if (window.__exportCsvV19) {
   }
 
   function gateLabelV22(gate = "") {
+    if (window.InboundSites?.gateLabel) return window.InboundSites.gateLabel(gate);
     const text = String(gate || "");
-    const site = text.startsWith("STL-") ? "STL" : "CBT";
-    const number = text.match(/(\d{2})$/)?.[1] || text.match(/\d+/)?.[0] || "-";
-    return `${site} ${number}`;
+    const number = text.match(/(\d{2})\s*$/)?.[1] || text.match(/\d+/)?.[0] || "-";
+    return `${text.split("-")[0] || "GATE"} ${number}`;
   }
 
   function gatePanelV22(rows) {
@@ -14234,11 +14267,17 @@ if (window.__exportCsvV19) {
       : typeof getCibitungGateOptions === "function"
         ? getCibitungGateOptions()
         : [];
+    // Hanya gate milik gudang yang sedang dilihat; gudang lain punya panelnya
+    // sendiri saat operator berpindah site.
+    const siteCode = window.InboundSites?.current?.()?.code || "";
     const gates = [
       ...new Set(
         configured
           .map((gate) => String(gate || "").trim())
-          .filter((gate) => gate && !gate.toUpperCase().startsWith("STL-")),
+          .filter(
+            (gate) =>
+              gate && (!siteCode || gate.toUpperCase().startsWith(`${siteCode}-`)),
+          ),
       ),
     ];
     const activeRows = rows.filter((row) => ["CALLED", "UNLOADING"].includes(safeStatus(row)));
@@ -14300,7 +14339,7 @@ if (window.__exportCsvV19) {
 
   function tableV19(rows) {
     const sorted = [...rows].sort((a,b) => riskSort(a,b) || String(a.queue_no || "").localeCompare(String(b.queue_no || "")));
-    return `<article class="wm19-card wm19-table-card"><header class="wm19-card-head"><div><h3>Queue Operasional</h3><p>Panel utama untuk action SPV. Prioritas SLA tertinggi berada paling atas.</p></div><span class="wm19-chip">${numV19(rows.length)} total</span></header><div class="wm19-table-wrap"><table id="monitor-unified-table" class="wm19-table"><thead><tr><th>QUEUE</th><th>VENDOR / PLAT</th><th>STATUS</th><th>GATE</th><th>MENUNGGU</th><th>SLA</th><th>PROGRESS PO</th></tr></thead><tbody>${sorted.map((row) => { const status = safeStatus(row); const sla = getInboundSlaInfo(row); const slaText = sla.status === "SLA MISS" || sla.status === "LATE" ? sla.label : (sla.label || "On track"); const slaColor = (sla.status === "SLA MISS" || sla.status === "LATE") ? "color:rgb(var(--error))" : sla.status === "ON PROCESS" ? "color:rgb(var(--warning))" : "color:rgb(var(--success))"; return `<tr data-wm19-row="1"><td class="wm19-queue">${esc(row.queue_no || "-")}</td><td><b style="display:block;color:rgb(var(--on-surface));font-size:12px">${esc(row.vendor_name || "-")}</b>${esc(row.plat_number || "-")}</td><td><span class="wm19-status" style="${statusStyle(status)}">${esc(displayStatus(status))}</span></td><td>${esc(row.gate || "-")}</td><td>${esc(rowWaiting(row))}</td><td style="font-weight:800;${slaColor}">${esc(slaText)}</td><td>${esc(row.checker_progress || row.gr_progress || `${row.ticket_po_count || 0} PO`)}</td></tr>`; }).join("") || `<tr><td colspan="7" class="wm19-empty">Belum ada data antrian.</td></tr>`}</tbody></table></div><footer class="wm19-foot">Menampilkan seluruh <b>${numV19(rows.length)} kendaraan</b> · scroll di dalam panel · urutan berdasarkan risiko SLA.</footer></article>`;
+    return `<article class="wm19-card wm19-table-card"><header class="wm19-card-head"><div><h3>Queue Operasional</h3><p>Panel utama untuk action SPV. Prioritas SLA tertinggi berada paling atas.</p></div><span class="wm19-chip">${numV19(rows.length)} total</span></header><div class="wm19-table-wrap"><table id="monitor-unified-table" class="wm19-table"><thead><tr><th>QUEUE</th><th>VENDOR / PLAT</th><th>STATUS</th><th>GATE</th><th>MENUNGGU</th><th>SLA</th><th>PROGRESS PO</th></tr></thead><tbody>${sorted.map((row) => { const status = safeStatus(row); const sla = getInboundSlaInfo(row); const slaText = sla.status === "SLA MISS" || sla.status === "LATE" ? sla.label : (sla.label || "On track"); const slaColor = (sla.status === "SLA MISS" || sla.status === "LATE") ? "color:rgb(var(--error))" : sla.status === "ON PROCESS" ? "color:rgb(var(--warning))" : "color:rgb(var(--success))"; return `<tr data-wm19-row="1"><td class="wm19-queue">${esc(row.queue_no || "-")}</td><td><b style="display:block;color:rgb(var(--on-surface));font-size:12px">${esc(row.vendor_name || "-")}</b>${esc(row.plat_number || "-")}</td><td><span class="wm19-status" style="${statusStyle(status)}">${esc(displayStatus(status))}</span></td><td>${gateChipsHtml(row.gate)}</td><td>${esc(rowWaiting(row))}</td><td style="font-weight:800;${slaColor}">${esc(slaText)}</td><td>${esc(row.checker_progress || row.gr_progress || `${row.ticket_po_count || 0} PO`)}</td></tr>`; }).join("") || `<tr><td colspan="7" class="wm19-empty">Belum ada data antrian.</td></tr>`}</tbody></table></div><footer class="wm19-foot">Menampilkan seluruh <b>${numV19(rows.length)} kendaraan</b> · scroll di dalam panel · urutan berdasarkan risiko SLA.</footer></article>`;
   }
 
   window.wmFilterV19 = function wmFilterV19(input) {
@@ -14670,4 +14709,135 @@ if (window.__exportCsvV19) {
     if (!ROLE_ACCESS[role].includes("commercial")) ROLE_ACCESS[role].push("commercial");
   });
   applyRoleAccessUI?.();
+})();
+
+/* ==========================================================================
+ * V24 — MULTI SITE UI + AKSESIBILITAS
+ *
+ * Ditempatkan paling bawah agar menimpa perilaku lama tanpa mengganggu patch
+ * di atasnya, mengikuti konvensi file ini.
+ *
+ * Cakupan:
+ * - Pemilih gudang di header (PGS sekarang; SRG/BIT/CSI menyusul).
+ * - Merek "Antrian Inbound Frozen" pada sidebar dan judul dokumen.
+ * - Perbaikan aksesibilitas: aria-expanded sidebar, aria-busy konten,
+ *   fokus pindah halaman, dan pengumuman toast untuk pembaca layar.
+ * ========================================================================== */
+(function installInboundFrozenV24Ui() {
+  if (window.__inboundFrozenV24UiInstalled) return;
+  window.__inboundFrozenV24UiInstalled = true;
+
+  const sites = () => window.InboundSites;
+
+  // ------------------------------------------------------------------------
+  // PEMILIH GUDANG
+  // ------------------------------------------------------------------------
+  window.renderSiteSwitcher = function renderSiteSwitcher() {
+    const wrap = document.getElementById("site-switcher-wrap");
+    const select = document.getElementById("site-switcher");
+    if (!wrap || !select || !sites()) return;
+
+    const active = sites().activeSites();
+    const current = sites().current();
+
+    // Satu gudang aktif tidak perlu pemilih; kontrol yang tidak dapat
+    // mengubah apa pun hanya menambah beban baca operator.
+    if (active.length < 2) {
+      wrap.hidden = true;
+      select.innerHTML = "";
+      return;
+    }
+
+    wrap.hidden = false;
+    const desired = active
+      .map(
+        (site) =>
+          `<option value="${esc(site.code)}"${site.code === current?.code ? " selected" : ""}>${esc(site.code)} — ${esc(site.short_name || site.name)}</option>`,
+      )
+      .join("");
+    if (select.innerHTML !== desired) select.innerHTML = desired;
+    select.value = current?.code || "";
+  };
+
+  window.switchInboundSite = function switchInboundSite(code) {
+    const next = sites()?.setCurrent(code);
+    if (!next) return;
+
+    // Snapshot gudang lama tidak boleh terlihat sesaat di gudang baru.
+    if (typeof v2RawResponse !== "undefined") v2RawResponse = null;
+    window.clearInboundEtagCache?.();
+    state.options = { ...state.options, gate: sites().gateOptions() };
+
+    applyInboundBrand();
+    window.renderSiteSwitcher();
+    showToast("Gudang aktif: " + (next.short_name || next.name));
+
+    if (typeof initApi === "function") initApi();
+  };
+
+  // ------------------------------------------------------------------------
+  // MEREK
+  // ------------------------------------------------------------------------
+  function applyInboundBrand() {
+    const site = sites()?.current();
+    const brandName = document.getElementById("brand-name");
+    const brandSite = document.getElementById("brand-site");
+    if (brandName) brandName.textContent = sites()?.BRAND_SHORT || "Inbound Frozen";
+    if (brandSite) {
+      brandSite.textContent = site
+        ? `${site.code} · ${site.short_name || site.name}`
+        : "Sistem Antrian";
+    }
+    document.title = site
+      ? `${inboundBrandFull()} — ${site.short_name || site.name}`
+      : inboundBrandFull();
+  }
+  window.applyInboundBrand = applyInboundBrand;
+
+  // ------------------------------------------------------------------------
+  // AKSESIBILITAS
+  // ------------------------------------------------------------------------
+  const applySidebarVisibilityBeforeV24 = applySidebarVisibility;
+  window.applySidebarVisibility = function applySidebarVisibilityV24(hidden) {
+    applySidebarVisibilityBeforeV24(hidden);
+    const toggle = document.getElementById("sidebar-toggle");
+    // Tanpa sinkronisasi ini pembaca layar terus melaporkan menu "expanded"
+    // walaupun sidebar sudah disembunyikan.
+    if (toggle) toggle.setAttribute("aria-expanded", hidden ? "false" : "true");
+  };
+  try {
+    applySidebarVisibility = window.applySidebarVisibility;
+  } catch (error) {}
+
+  const renderPageBeforeV24 = renderPage;
+  window.renderPage = function renderPageV24(page, toast = true) {
+    const result = renderPageBeforeV24.call(this, page, toast);
+    const root = document.getElementById("page-root");
+    if (root) {
+      root.setAttribute("aria-busy", "false");
+      // Konten baru dimuat tanpa navigasi dokumen, jadi fokus dipindahkan
+      // manual supaya pengguna keyboard tidak tertinggal di menu lama.
+      if (document.activeElement?.closest?.("#side-nav, #mobile-nav")) {
+        root.focus({ preventScroll: true });
+      }
+    }
+    applyInboundBrand();
+    window.renderSiteSwitcher();
+    return result;
+  };
+  try {
+    renderPage = window.renderPage;
+  } catch (error) {}
+
+  document.addEventListener("DOMContentLoaded", () => {
+    applyInboundBrand();
+    window.renderSiteSwitcher();
+    const toggle = document.getElementById("sidebar-toggle");
+    if (toggle) {
+      toggle.setAttribute(
+        "aria-expanded",
+        localStorage.getItem("inboundSidebarHidden") === "1" ? "false" : "true",
+      );
+    }
+  });
 })();

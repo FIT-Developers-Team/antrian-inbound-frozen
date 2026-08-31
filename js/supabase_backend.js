@@ -3,7 +3,7 @@
 
   const FUNCTION_BASE =
     "https://qiafoaoslnbmtsbnmqou.supabase.co/functions/v1/inbound-api";
-  const SESSION_KEY = "inbound_cbt_supabase_session_v1";
+  const SESSION_KEY = "inbound_frozen_supabase_session_v1";
 
   window.INBOUND_BACKEND_URL = FUNCTION_BASE;
   window.getInboundSessionToken = function getInboundSessionToken() {

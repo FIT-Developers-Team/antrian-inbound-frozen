@@ -42,17 +42,27 @@ test("COMERCIAL reuses the QR driver dataset and tracking helpers", () => {
 
 test("Supabase grants COMERCIAL only read actions", () => {
   const source = read("supabase/functions/inbound-api/index.ts");
-  const readBlock = source.match(
-    /if \(\["state", "state_delta", "realtime_config", "tickets", "export_rows"\][\s\S]*?\n  }/,
-  );
-  const writeBlock = source.match(
-    /if \(\["create_ticket", "create_tickets_bulk"\][\s\S]*?\n  }/,
-  );
 
-  assert.ok(readBlock, "read authorization block must exist");
-  assert.ok(writeBlock, "write authorization block must exist");
-  assert.match(readBlock[0], /"COMERCIAL"/);
-  assert.doesNotMatch(writeBlock[0], /"COMERCIAL"/);
+  // Peran baca dan tulis kini berupa konstanta bernama, sehingga pengujian
+  // memeriksa isi konstantanya, bukan susunan literal di dalam `if`.
+  const readRoles = source.match(/const READ_ROLES = \[([^\]]*)\]/)?.[1] || "";
+  const writeRoles = source.match(/const WRITE_ROLES = \[([^\]]*)\]/)?.[1] || "";
+
+  assert.match(readRoles, /"COMERCIAL"/, "COMERCIAL must keep read access");
+  assert.doesNotMatch(writeRoles, /"COMERCIAL"/, "COMERCIAL must never write");
+
+  // Aksi baca memakai READ_ROLES; aksi tulis memakai WRITE_ROLES.
+  assert.match(
+    source,
+    /if \(\["state", "state_delta", "realtime_config", "tickets", "export_rows", "sites"\]\.includes\(action\)\) \{\s*return READ_ROLES\.includes\(role\);/,
+  );
+  assert.match(
+    source,
+    /if \(\["create_ticket", "create_tickets_bulk"\]\.includes\(action\)\) \{\s*return WRITE_ROLES\.includes\(role\);/,
+  );
+  // Master PO adalah payload berat untuk layar pendaftaran; COMERCIAL tidak berhak.
+  assert.match(source, /if \(action === "po_master"\) return WRITE_ROLES\.includes\(role\);/);
+
   assert.match(source, /Deno\.env\.get\("INBOUND_COMMERCIAL_USER"\)/);
   assert.match(source, /return \[\.\.\.users, \.\.\.commercialUsers\]/);
 });
