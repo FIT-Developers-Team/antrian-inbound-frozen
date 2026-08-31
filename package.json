@@ -1,8 +1,8 @@
 {
-  "name": "antrian-inbound-cbt",
+  "name": "antrian-inbound-frozen",
   "private": true,
   "version": "1.0.0",
-  "description": "Inbound CBT queue application",
+  "description": "Antrian Inbound Frozen - multi-site inbound queue application",
   "engines": {
     "node": ">=22"
   },
@@ -15,14 +15,17 @@
   },
   "scripts": {
     "build:realtime": "esbuild js/realtime_client_source.js --bundle --minify --platform=browser --format=iife --outfile=js/realtime_client.js",
-    "check": "node --check api/inbound.js && node --check api/sync-superset.js",
+    "check": "node --check api/inbound.js && node --check api/sync-superset.js && node --check js/app.js && node --check js/api_v2.js && node --check js/site_config.js && node --check js/dropoff_domain.js && node --check js/supabase_backend.js",
     "test": "node --test test/*.test.js",
+    "seed:supabase": "node scripts/seed-reference-data.mjs",
     "android:sync": "npx cap sync android",
-    "android:build:debug": "cd android && gradlew.bat assembleDebug"
+    "android:build:debug": "cd android && gradlew.bat assembleDebug",
+    "check:functions": "npx esbuild supabase/functions/_shared/http.ts supabase/functions/inbound-api/index.ts supabase/functions/sync-superset/index.ts supabase/functions/sync-gsheet/index.ts --outdir=.tools/check --format=esm --target=es2022"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.4.2",
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "supabase": "^2.39.2"
   }
 }

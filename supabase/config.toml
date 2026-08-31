@@ -1,0 +1,11 @@
+project_id = "qiafoaoslnbmtsbnmqou"
+
+[functions.inbound-api]
+verify_jwt = false
+
+[functions.sync-superset]
+verify_jwt = false
+
+[functions.sync-gsheet]
+verify_jwt = false
+

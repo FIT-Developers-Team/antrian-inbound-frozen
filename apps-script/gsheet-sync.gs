@@ -1,7 +1,7 @@
 /**
- * Inbound CBT - MotherDuck to Google Sheets mirror.
+ * Antrian Inbound Frozen - Supabase to Google Sheets mirror.
  * Deploy as a Web App (execute as owner, access: anyone) and set these Script Properties:
- *   GSHEET_SYNC_SECRET = a long random secret shared only with Vercel
+ *   GSHEET_SYNC_SECRET = a long random secret shared only with the Supabase Edge Function
  */
 
 var GSHEET_SYNC_SPREADSHEET_ID = "1Q9R1TQuksL5pCc94vWfwKFUrzdN9nQlwXJZvtBxRbfE";
@@ -25,7 +25,8 @@ var GSHEET_SYNC_HEADERS = [
   "checker_done_at", "checker_started_by", "checker_done_by", "checker_duration",
   "checker_duration_minutes", "gr_status", "done_gr_by", "gr_wait_duration",
   "gr_wait_minutes", "inbound_sla_duration", "inbound_sla_minutes",
-  "wa_ticket_status", "wa_ticket_sent_at", "wa_ticket_error", "wa_ticket_target"
+  "wa_ticket_status", "wa_ticket_sent_at", "wa_ticket_error", "wa_ticket_target",
+  "site_code"
 ];
 
 var GSHEET_SYNC_PLAIN_TEXT_HEADERS = {
@@ -60,7 +61,7 @@ function doGet(e) {
   if (action !== "health") return gsheetSyncJson_({ status: "error", message: "Unknown action" });
   return gsheetSyncJson_({
     status: "success",
-    service: "Inbound CBT GSheet Sync",
+    service: "Antrian Inbound Frozen GSheet Sync",
     sheet: GSHEET_SYNC_SHEET_NAME,
     timestamp: new Date().toISOString()
   });

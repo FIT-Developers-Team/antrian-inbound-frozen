@@ -2842,3 +2842,488 @@ button.wm19-gate-card:focus-visible { outline:3px solid rgb(var(--primary) / .28
 @media (max-width:900px) { .wm-command-v19 .wm19-gate-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }.wm-command-v19 .wm19-side { grid-template-columns:1fr; }.wm-command-v19 .wm19-table-wrap { max-height:600px; } }
 @media (max-width:640px) { .wm-command-v19 .wm19-hero,.wm-command-v19 .wm19-gate-head { align-items:flex-start; flex-direction:column; }.wm-command-v19 .wm19-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }.wm-command-v19 .wm19-filter { flex-wrap:wrap; }.wm-command-v19 .wm19-filter input { min-width:0; width:calc(100% - 36px); }.wm-command-v19 .wm19-result { width:100%; margin-left:32px; }.wm-command-v19 .wm19-gate-summary { justify-content:flex-start; }.wm-command-v19 .wm19-gate-grid { grid-template-columns:repeat(2,minmax(0,1fr)); padding:10px; }.wm-command-v19 .wm19-gate-card { min-height:110px; } }
 @media (max-width:420px) { .wm-command-v19 .wm19-gate-grid { grid-template-columns:1fr; } }
+
+/* ==========================================================================
+   COMERCIAL V23 — search-first, read-only tracking from the QR driver dataset.
+   ========================================================================== */
+.commercial-tracker { --commercial-card:rgb(var(--surface-container-low) / .92); --commercial-soft:rgb(var(--surface-container) / .68); --commercial-border:rgb(var(--outline-variant) / .58); max-width:1560px; margin:0 auto; color:rgb(var(--on-surface)); }
+.commercial-hero,.commercial-list-panel,.commercial-detail,.commercial-toolbar,.commercial-metric { border:1px solid var(--commercial-border); background:var(--commercial-card); box-shadow:0 8px 24px rgb(15 23 42 / .06); }
+.commercial-hero { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:19px 21px; border-radius:16px; }
+.commercial-eyebrow { color:rgb(var(--primary)); font-size:10px; font-weight:900; letter-spacing:.14em; }
+.commercial-hero h2 { margin:5px 0 0; font-size:24px; line-height:1.12; font-weight:900; }
+.commercial-hero p { margin:6px 0 0; color:rgb(var(--on-surface-variant)); font-size:12px; }
+.commercial-hero button,.commercial-actions button { display:inline-flex; align-items:center; justify-content:center; gap:7px; border:1px solid rgb(var(--primary) / .2); border-radius:10px; background:rgb(var(--primary) / .1); color:rgb(var(--primary)); padding:10px 13px; font:inherit; font-size:11px; font-weight:800; cursor:pointer; }
+.commercial-hero button:hover,.commercial-actions button:hover { background:rgb(var(--primary) / .17); }
+.commercial-hero button:focus-visible,.commercial-actions button:focus-visible,.commercial-ticket:focus-visible,.commercial-toolbar input:focus-visible,.commercial-toolbar select:focus-visible { outline:3px solid rgb(var(--primary) / .25); outline-offset:2px; }
+.commercial-metrics { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px; margin:13px 0; }
+.commercial-metric { position:relative; display:flex; align-items:center; gap:11px; min-width:0; padding:13px; overflow:hidden; border-radius:14px; }
+.commercial-metric::before { content:""; position:absolute; inset:0 auto 0 0; width:4px; background:rgb(var(--primary)); }
+.commercial-metric > .material-symbols-outlined { display:grid; place-items:center; width:35px; height:35px; flex:0 0 35px; border-radius:10px; background:rgb(var(--primary) / .11); color:rgb(var(--primary)); font-size:19px; }
+.commercial-metric div { min-width:0; }
+.commercial-metric small,.commercial-metric em { display:block; color:rgb(var(--on-surface-variant)); font-size:9px; font-style:normal; white-space:nowrap; }
+.commercial-metric b { display:block; margin:2px 0; font-family:JetBrains Mono,monospace; font-size:22px; line-height:1; }
+.commercial-metric.amber::before { background:rgb(var(--warning)); }.commercial-metric.amber > span { color:rgb(var(--warning)); background:rgb(var(--warning) / .1); }
+.commercial-metric.purple::before { background:rgb(var(--secondary)); }.commercial-metric.purple > span { color:rgb(var(--secondary)); background:rgb(var(--secondary) / .1); }
+.commercial-metric.cyan::before { background:#0891b2; }.commercial-metric.cyan > span { color:#0891b2; background:rgb(8 145 178 / .1); }
+.commercial-metric.red::before { background:rgb(var(--error)); }.commercial-metric.red > span { color:rgb(var(--error)); background:rgb(var(--error) / .1); }
+.commercial-metric.green::before { background:rgb(var(--success)); }.commercial-metric.green > span { color:rgb(var(--success)); background:rgb(var(--success) / .1); }
+.commercial-toolbar { display:grid; grid-template-columns:minmax(260px,1fr) 220px 160px 150px; gap:10px; align-items:end; margin-bottom:13px; padding:11px; border-radius:14px; }
+.commercial-toolbar label { min-width:0; }
+.commercial-toolbar label > span { display:block; margin:0 0 5px; color:rgb(var(--on-surface-variant)); font-size:9px; font-weight:800; text-transform:uppercase; }
+.commercial-toolbar .commercial-search { display:flex; align-items:center; gap:8px; align-self:stretch; padding:0 12px; border:1px solid var(--commercial-border); border-radius:10px; background:rgb(var(--surface-container-lowest) / .7); }
+.commercial-toolbar .commercial-search > span { margin:0; font-size:20px; }
+.commercial-toolbar input,.commercial-toolbar select { width:100%; min-height:39px; border:1px solid var(--commercial-border); border-radius:9px; background:rgb(var(--surface-container-lowest) / .7); color:rgb(var(--on-surface)); padding:8px 10px; font:inherit; font-size:11px; }
+.commercial-toolbar .commercial-search input { min-height:100%; border:0; background:transparent; padding:0; outline:0; }
+.commercial-date-control { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px; }
+.commercial-date-control button { min-height:39px; padding:0 9px; border:1px solid rgb(var(--primary) / .2); border-radius:9px; background:rgb(var(--primary) / .08); color:rgb(var(--primary)); font:inherit; font-size:9px; font-weight:900; cursor:pointer; }
+.commercial-date-control button:hover { background:rgb(var(--primary) / .15); }
+.commercial-workspace { display:grid; grid-template-columns:minmax(350px,.83fr) minmax(500px,1.35fr); gap:13px; align-items:start; }
+.commercial-list-panel,.commercial-detail { overflow:hidden; border-radius:16px; }
+.commercial-list-head { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:58px; padding:12px 15px; border-bottom:1px solid var(--commercial-border); }
+.commercial-list-head b,.commercial-list-head small { display:block; }.commercial-list-head b { font-size:13px; }.commercial-list-head small { margin-top:3px; color:rgb(var(--on-surface-variant)); font-size:9px; }
+.commercial-list-head > span { padding:5px 8px; border-radius:999px; background:rgb(var(--primary) / .1); color:rgb(var(--primary)); font-size:9px; font-weight:900; }
+.commercial-ticket-list { max-height:670px; overflow:auto; scrollbar-gutter:stable; }
+.commercial-ticket { position:relative; width:100%; padding:13px 15px; border:0; border-bottom:1px solid rgb(var(--outline-variant) / .3); background:transparent; color:rgb(var(--on-surface)); text-align:left; font:inherit; cursor:pointer; transition:background .15s ease; }
+.commercial-ticket:hover { background:rgb(var(--primary) / .045); }.commercial-ticket.selected { background:rgb(var(--primary) / .09); }.commercial-ticket.selected::before { content:""; position:absolute; inset:0 auto 0 0; width:4px; background:rgb(var(--primary)); }
+.commercial-ticket-top,.commercial-ticket-meta,.commercial-ticket-foot { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.commercial-queue { color:rgb(var(--primary)); font-family:JetBrains Mono,monospace; font-size:14px; font-weight:900; }
+.commercial-ticket > strong { display:block; margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.commercial-ticket-meta { justify-content:flex-start; margin-top:5px; color:rgb(var(--on-surface-variant)); font-size:9px; }.commercial-ticket-meta span:not(:last-child)::after { content:"·"; margin-left:8px; }
+.commercial-ticket-foot { margin-top:8px; color:rgb(var(--on-surface-variant)); font-size:9px; }.commercial-ticket-foot b { text-align:right; }
+.commercial-status { display:inline-flex; align-items:center; padding:4px 7px; border:1px solid rgb(var(--primary) / .18); border-radius:999px; background:rgb(var(--primary) / .09); color:rgb(var(--primary)); font-size:8px; font-weight:900; white-space:nowrap; }
+.commercial-status.status-waiting { color:rgb(var(--warning)); border-color:rgb(var(--warning) / .22); background:rgb(var(--warning) / .1); }.commercial-status.status-unloading { color:rgb(var(--secondary)); border-color:rgb(var(--secondary) / .22); background:rgb(var(--secondary) / .1); }.commercial-status.status-completed { color:rgb(var(--success)); border-color:rgb(var(--success) / .22); background:rgb(var(--success) / .1); }
+.sla-danger { color:rgb(var(--error))!important; }.sla-warning { color:rgb(var(--warning))!important; }.sla-good { color:rgb(var(--success))!important; }
+.commercial-detail { min-height:670px; }
+.commercial-detail-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:16px 18px; border-bottom:1px solid var(--commercial-border); }
+.commercial-detail-title { display:flex; align-items:center; flex-wrap:wrap; gap:9px; }.commercial-detail-title > span:first-child { color:rgb(var(--primary)); font-family:JetBrains Mono,monospace; font-size:25px; font-weight:900; }
+.commercial-detail-head p { margin:5px 0 0; color:rgb(var(--on-surface-variant)); font-size:10px; }
+.commercial-live { display:inline-flex; align-items:center; gap:6px; color:rgb(var(--success)); font-size:9px; font-weight:900; white-space:nowrap; }.commercial-live i { width:7px; height:7px; border-radius:50%; background:rgb(var(--success)); box-shadow:0 0 0 4px rgb(var(--success) / .12); }
+.commercial-detail-kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; padding:13px 18px 0; }
+.commercial-detail-kpis > div { min-width:0; padding:11px; border:1px solid var(--commercial-border); border-radius:11px; background:var(--commercial-soft); }.commercial-detail-kpis small,.commercial-detail-kpis b { display:block; }.commercial-detail-kpis small { color:rgb(var(--on-surface-variant)); font-size:9px; }.commercial-detail-kpis b { margin-top:5px; overflow:hidden; text-overflow:ellipsis; font-family:JetBrains Mono,monospace; font-size:13px; white-space:nowrap; }
+.commercial-progress { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; padding:9px 18px 0; }.commercial-progress > div { padding:11px; border:1px solid var(--commercial-border); border-radius:11px; background:var(--commercial-soft); }.commercial-progress span { display:flex; justify-content:space-between; gap:8px; font-size:10px; }.commercial-progress em { color:rgb(var(--primary)); font-style:normal; font-weight:800; }.commercial-progress progress { width:100%; height:7px; margin-top:8px; accent-color:rgb(var(--primary)); }
+.commercial-section { padding:14px 18px 0; }.commercial-section h3 { margin:0 0 10px; font-size:12px; font-weight:900; }
+.commercial-timeline { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); padding:2px 0 5px; }
+.commercial-step { position:relative; min-width:0; text-align:center; }.commercial-step::before { content:""; position:absolute; top:13px; left:-50%; width:100%; height:2px; background:rgb(var(--outline-variant)); }.commercial-step:first-child::before { display:none; }.commercial-step.done::before,.commercial-step.current::before { background:rgb(var(--primary)); }
+.commercial-step i { position:relative; z-index:1; display:grid; place-items:center; width:27px; height:27px; margin:auto; border:2px solid rgb(var(--outline-variant)); border-radius:50%; background:rgb(var(--surface-container-low)); color:rgb(var(--on-surface-variant)); font-style:normal; }.commercial-step.done i,.commercial-step.current i { border-color:rgb(var(--primary)); background:rgb(var(--primary)); color:white; }.commercial-step.current i { box-shadow:0 0 0 4px rgb(var(--primary) / .12); }
+.commercial-step i span { font-size:14px; }.commercial-step b,.commercial-step small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.commercial-step b { margin-top:6px; font-size:8px; }.commercial-step small { margin-top:2px; color:rgb(var(--on-surface-variant)); font-size:7px; }
+.commercial-info-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }.commercial-info-grid > div { min-width:0; padding:9px 10px; border-radius:9px; background:var(--commercial-soft); }.commercial-info-grid small,.commercial-info-grid b { display:block; }.commercial-info-grid small { color:rgb(var(--on-surface-variant)); font-size:8px; }.commercial-info-grid b { margin-top:4px; overflow:hidden; text-overflow:ellipsis; font-size:9px; white-space:nowrap; }
+.commercial-po { margin:14px 18px 0; overflow:hidden; border:1px solid var(--commercial-border); border-radius:11px; background:var(--commercial-soft); }.commercial-po summary { display:flex; justify-content:space-between; padding:11px; cursor:pointer; font-size:10px; font-weight:900; }.commercial-po summary span { display:flex; align-items:center; gap:6px; }.commercial-po summary .material-symbols-outlined { font-size:17px; }.commercial-po summary b { color:rgb(var(--primary)); }.commercial-po-scroll { max-height:170px; overflow:auto; border-top:1px solid var(--commercial-border); }.commercial-po table { width:100%; border-collapse:collapse; }.commercial-po th,.commercial-po td { padding:8px 10px; border-bottom:1px solid rgb(var(--outline-variant) / .25); font-size:8px; text-align:left; white-space:nowrap; }.commercial-po th { position:sticky; top:0; background:rgb(var(--surface-container)); color:rgb(var(--on-surface-variant)); }
+.commercial-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; padding:14px 18px 18px; }.commercial-actions button:last-child { background:rgb(var(--primary)); color:rgb(var(--on-primary)); }
+.commercial-empty { padding:46px 20px; color:rgb(var(--on-surface-variant)); font-size:11px; text-align:center; }
+@media (max-width:1280px) { .commercial-metrics { grid-template-columns:repeat(3,minmax(0,1fr)); }.commercial-workspace { grid-template-columns:minmax(320px,.8fr) minmax(440px,1.2fr); } }
+@media (max-width:1100px) { .commercial-toolbar { grid-template-columns:1fr 1fr 1fr; }.commercial-toolbar .commercial-search { grid-column:1/-1; min-height:44px; } }
+@media (max-width:900px) { .commercial-toolbar { grid-template-columns:1fr 1fr; }.commercial-toolbar .commercial-search { grid-column:1/-1; }.commercial-workspace { grid-template-columns:1fr; }.commercial-ticket-list { max-height:480px; }.commercial-detail { min-height:0; scroll-margin-top:12px; } }
+@media (max-width:640px) { .commercial-hero { align-items:flex-start; flex-direction:column; }.commercial-hero h2 { font-size:21px; }.commercial-hero button { width:100%; }.commercial-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }.commercial-metric { padding:11px; }.commercial-metric b { font-size:19px; }.commercial-toolbar { grid-template-columns:1fr; }.commercial-toolbar .commercial-search { grid-column:auto; }.commercial-detail-head { align-items:flex-start; }.commercial-detail-kpis,.commercial-info-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.commercial-detail-kpis > div:last-child { grid-column:1/-1; }.commercial-progress { grid-template-columns:1fr; }.commercial-timeline { grid-template-columns:1fr; gap:0; padding-left:4px; }.commercial-step { display:grid; grid-template-columns:32px 80px 1fr; align-items:center; text-align:left; min-height:42px; }.commercial-step::before { top:-21px; left:13px; width:2px; height:42px; }.commercial-step i { margin:0; }.commercial-step b,.commercial-step small { margin:0 0 0 8px; }.commercial-actions { flex-direction:column; }.commercial-actions button { width:100%; } }
+
+/* ==========================================================================
+ * V24 — FONDASI UI/UX & AKSESIBILITAS
+ *
+ * Bagian ini memperbaiki dasar interaksi yang sebelumnya tidak konsisten:
+ * indikator fokus keyboard, target sentuh, kontras, dan status halaman.
+ * Ditempatkan paling bawah agar menang tanpa perlu !important di mana-mana.
+ * ========================================================================== */
+
+/* --------------------------------------------------------------------------
+ * 1. Teks khusus pembaca layar
+ * ------------------------------------------------------------------------ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --------------------------------------------------------------------------
+ * 2. Lompat ke konten — pengguna keyboard tidak perlu menelusuri 11 menu
+ * ------------------------------------------------------------------------ */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 13px;
+  background: rgb(var(--primary-container));
+  color: rgb(var(--on-primary-container));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  transform: translateY(-160%);
+  transition: transform 0.18s ease;
+}
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/* --------------------------------------------------------------------------
+ * 3. Fokus keyboard yang selalu terlihat
+ *
+ * Sebelumnya hanya .form-input yang punya penanda fokus; tombol, tab, dan
+ * kartu yang bisa diklik tidak memberi umpan balik sama sekali.
+ * ------------------------------------------------------------------------ */
+:focus-visible {
+  outline: 2px solid rgb(var(--primary));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid rgb(var(--primary));
+  outline-offset: 2px;
+}
+/* Kontainer scroll yang menerima fokus terprogram tidak perlu cincin fokus. */
+#page-root:focus,
+#page-root:focus-visible {
+  outline: none;
+}
+.form-input:focus-visible,
+.form-select:focus-visible {
+  outline: 2px solid rgb(var(--primary));
+  outline-offset: 1px;
+}
+
+/* --------------------------------------------------------------------------
+ * 4. Target sentuh minimum
+ *
+ * WCAG 2.5.8 meminta 24x24 CSS px; operasional gudang memakai sarung tangan,
+ * jadi 44px dipakai di perangkat sentuh.
+ * ------------------------------------------------------------------------ */
+@media (pointer: coarse) {
+  .nav-btn,
+  .mobile-nav-btn,
+  .thin-tab,
+  header button,
+  #site-switcher {
+    min-height: 44px;
+  }
+  header button {
+    min-width: 44px;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * 5. Pemilih gudang
+ * ------------------------------------------------------------------------ */
+.site-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--outline-variant));
+  background: rgb(var(--surface-container) / 0.7);
+  color: rgb(var(--on-surface));
+  cursor: pointer;
+}
+.site-switcher[hidden] {
+  display: none;
+}
+.site-switcher .material-symbols-outlined {
+  font-size: 18px;
+  color: rgb(var(--primary));
+}
+.site-switcher select {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 22px 4px 2px;
+  cursor: pointer;
+  /* Panah digambar sendiri agar konsisten di light dan dark mode. */
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 9px center, right 4px center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.site-switcher select:focus {
+  outline: none;
+}
+.site-switcher:focus-within {
+  border-color: rgb(var(--primary));
+  box-shadow: 0 0 0 1px rgb(var(--primary));
+}
+.site-switcher option {
+  background: rgb(var(--surface-container-lowest));
+  color: rgb(var(--on-surface));
+}
+.light .site-switcher option {
+  background: #fff;
+  color: rgb(15 23 42);
+}
+
+/* --------------------------------------------------------------------------
+ * 6. Status awal & tanpa JavaScript
+ * ------------------------------------------------------------------------ */
+.app-boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 45vh;
+  color: rgb(var(--on-surface-variant));
+  font-size: 13px;
+  font-weight: 600;
+}
+.app-boot-spinner {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 3px solid rgb(var(--outline-variant));
+  border-top-color: rgb(var(--primary));
+  animation: inbound-spin 0.8s linear infinite;
+}
+@keyframes inbound-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-boot-spinner {
+    animation-duration: 2.4s;
+  }
+}
+.noscript-banner {
+  padding: 14px 18px;
+  background: rgb(var(--error-container));
+  color: rgb(var(--on-error-container));
+  font-weight: 700;
+  text-align: center;
+}
+
+/* --------------------------------------------------------------------------
+ * 7. Kontras & keterbacaan
+ *
+ * `opacity` pada teks label menurunkan rasio kontras di bawah ambang WCAG AA.
+ * Warna token sudah menyediakan tingkat kontras yang benar, jadi opasitas
+ * dekoratif tidak lagi diperlukan.
+ * ------------------------------------------------------------------------ */
+#brand-site {
+  opacity: 1;
+  color: rgb(var(--on-surface-variant));
+  letter-spacing: 0.12em;
+}
+.form-help {
+  color: rgb(var(--on-surface-variant));
+}
+.form-input::placeholder {
+  color: rgb(var(--on-surface-variant) / 0.85) !important;
+}
+
+/* Input wajib yang salah tidak boleh hanya ditandai warna. */
+.form-input.invalid,
+.form-select.invalid {
+  border-width: 2px;
+}
+.form-input.invalid + .form-help,
+.form-select.invalid + .form-help {
+  color: rgb(var(--error));
+  font-weight: 700;
+}
+
+/* --------------------------------------------------------------------------
+ * 8. Tabel lebar tetap dapat digulir tanpa mendorong body
+ * ------------------------------------------------------------------------ */
+.overflow-x-auto,
+.wm-table-scroll,
+.spv-table-wrap {
+  overscroll-behavior-x: contain;
+}
+
+/* --------------------------------------------------------------------------
+ * 9. Hormati preferensi gerakan minimal secara menyeluruh
+ * ------------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .calling-effect {
+    animation: none !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * 10. Cetak: tiket antrian tidak boleh membawa kerangka aplikasi
+ * ------------------------------------------------------------------------ */
+@media print {
+  .skip-link,
+  #sidebar-panel,
+  #mobile-menu-bar,
+  #toast,
+  header,
+  .global-auto-sync-indicator-v11 {
+    display: none !important;
+  }
+  #page-root {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * 11. Chip gate ringkas
+ *
+ * Nama gate multi-site ("PGS-GATE-INB-01-02") tiga kali lebih panjang dari
+ * penamaan lama ("Dock 01"), sehingga di sel tabel teksnya pecah menjadi
+ * beberapa baris dan tinggi baris meledak. Chip menampilkan bentuk ringkas
+ * dan menyimpan nama penuh di atribut title.
+ * ------------------------------------------------------------------------ */
+.gate-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--outline-variant));
+  background: rgb(var(--surface-container-high) / 0.6);
+  color: rgb(var(--on-surface));
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: help;
+}
+.gate-chip + .gate-chip {
+  margin-left: 4px;
+}
+
+/* --------------------------------------------------------------------------
+ * 12. Header aplikasi
+ *
+ * Judul halaman sebelumnya terpotong ("Waiting List Monitor…") karena pil
+ * status dan jam ikut merebut ruang. Judul kini mendapat prioritas ruang dan
+ * elemen sekunder tidak lagi menyusut menjadi dua baris.
+ * ------------------------------------------------------------------------ */
+/* Judul tidak ikut menyusut; subjudul yang menyerap kekurangan ruang lebih
+   dulu, lalu hilang sama sekali sebelum judul sempat terpotong. */
+header #page-title {
+  flex: 0 0 auto;
+  max-width: 30ch;
+}
+header #page-subtitle {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+header #api-pill {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+@media (max-width: 1535px) {
+  header #page-subtitle,
+  header #page-subtitle + div,
+  header #page-title + div {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * 13. Kolom tabel operasional
+ *
+ * Nomor antrian dan tanggal tidak boleh terpecah di tengah token.
+ * ------------------------------------------------------------------------ */
+.font-queue-id {
+  white-space: nowrap;
+}
+.waiting-detail-panel-v15 .font-queue-id {
+  white-space: normal;
+}
+
+/* --------------------------------------------------------------------------
+ * 14. Filter Waiting List
+ *
+ * Input tanggal sebelumnya terpotong ("dd/mm/y") karena kolom grid terlalu
+ * sempit untuk kontrol tanggal bawaan browser.
+ * ------------------------------------------------------------------------ */
+/* Grid delapan kolom tetap memberi tiap kontrol hanya ~120px, sehingga kontrol
+   tanggal bawaan browser terpotong menjadi "dd/mm/y". Auto-fit menjamin lebar
+   minimum per kontrol di semua ukuran layar. */
+#waiting-list-filter-form-v181 > div:last-child {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+#waiting-list-filter-form-v181 > div:last-child > * {
+  min-width: 0;
+}
+input[type="date"].form-input,
+input[type="datetime-local"].form-input,
+input[type="time"].form-input {
+  min-width: 150px;
+}
+
+/* --------------------------------------------------------------------------
+ * 15. Indikator sinkron tidak boleh menghalangi input
+ *
+ * Indikator ini position:fixed di sudut kanan bawah. Di layar ponsel ia
+ * menutupi field form dan tombol di bawahnya, sehingga ketukan operator
+ * mengenai indikator, bukan kontrol yang dituju. Indikator murni informatif,
+ * jadi tidak perlu menerima pointer sama sekali.
+ * ------------------------------------------------------------------------ */
+.global-auto-sync-indicator-v11 {
+  pointer-events: none;
+  user-select: none;
+}
+@media (max-width: 700px) {
+  .global-auto-sync-indicator-v11 {
+    /* Di ponsel diturunkan opasitasnya dan disandarkan ke tepi supaya tidak
+       menutupi label field yang sedang diisi. */
+    opacity: 0.92;
+    max-width: calc(100vw - 20px);
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * 16. Toast tidak menghalangi tombol aksi
+ * ------------------------------------------------------------------------ */
+#toast {
+  pointer-events: none;
+  max-width: calc(100vw - 32px);
+  text-align: center;
+}
+
+/* --------------------------------------------------------------------------
+ * 17. Gate pada layar TV panggilan
+ *
+ * Nama gate multi-site sepanjang 18 karakter pecah menjadi lima baris pada
+ * ukuran 60px. Driver membaca layar ini dari jarak jauh, jadi label ringkas
+ * ditampilkan besar dan nama penuh tetap tersedia untuk mencocokkan papan gate.
+ * ------------------------------------------------------------------------ */
+.tv-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  line-height: 1;
+}
+.tv-gate .tv-gate-short {
+  font-size: clamp(38px, 5vw, 64px);
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.tv-gate .tv-gate-full {
+  font-size: clamp(11px, 1.1vw, 15px);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  opacity: 0.78;
+  word-break: break-word;
+}

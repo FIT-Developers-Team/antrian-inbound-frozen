@@ -1,0 +1,17 @@
+api
+supabase
+test
+android
+apps-script
+docs
+data
+node_modules
+.env*
+.vercel
+package.json
+package-lock.json
+capacitor.config.json
+backend-realtime-flow.png
+.claude
+scripts
+MIGRATION_RUNBOOK.md

@@ -61,10 +61,10 @@ function parseInboundDateSafe(value) {
 const API_URL_V2 =
   "https://script.google.com/macros/s/AKfycbyjby6UR8H0H397xkHbpx9F57BhPKeTCndn3Ic3aKpqvEeQnIGYUmwBMa9JzPBhIoeD/exec";
 
-// Operational queue and PO master now live in MotherDuck through the same
-// Vercel project. Keeping the URL relative makes Preview and Production use
-// their own API without exposing any database credentials to the browser.
-const MOTHERDUCK_API_URL = "/api/inbound";
+// Operational queue and PO master now live behind a Supabase Edge Function.
+// The URL is public configuration; privileged database credentials remain in
+// Supabase Edge Function secrets and are never shipped to the browser.
+const MOTHERDUCK_API_URL = window.INBOUND_BACKEND_URL;
 
 const columns = [
   "Timestamp",
@@ -109,10 +109,11 @@ const columns = [
   "Qty Refrences",
 ];
 
-const LOCAL_TICKETS_KEY = "inbound_cbt_manual_tickets_v2";
+const LOCAL_TICKETS_KEY = "inbound_frozen_manual_tickets_v1";
 let v2RawResponse = null;
 let v2PoIndex = null;
 let securitySubmitBusy = false;
+let fullDataLoadBusy = false;
 
 function hasApiV2() {
   return API_URL_V2 && !API_URL_V2.includes("PASTE_GAS_WEB_APP_URL_HERE");
@@ -173,9 +174,29 @@ async function apiPostV2(action, payload = {}) {
   return json.data || json;
 }
 
-function motherDuckApiUrl(action, params = {}) {
+/** Kode gudang aktif yang sedang dilihat operator. Ikut di setiap request. */
+function currentSiteCode() {
+  return window.InboundSites?.current?.()?.code || "";
+}
+
+/**
+ * Menyalin katalog gudang + gate dari backend ke registry frontend.
+ * Mengaktifkan SRG / BIT / CSI cukup dilakukan lewat `site_master` di Supabase;
+ * UI langsung mengikuti tanpa deploy ulang.
+ */
+function applyServerSiteCatalog(response = {}) {
+  const sites = response?.sites;
+  const gates = response?.gates;
+  if (!Array.isArray(sites) && !Array.isArray(gates)) return;
+  window.InboundSites?.applyServerCatalog?.({ sites, gates });
+  if (typeof window.renderSiteSwitcher === "function") window.renderSiteSwitcher();
+}
+
+function inboundApiUrl(action, params = {}) {
   const url = new URL(MOTHERDUCK_API_URL, window.location.origin);
   if (action) url.searchParams.set("action", action);
+  const site = currentSiteCode();
+  if (site) url.searchParams.set("site", site);
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
       url.searchParams.set(key, value);
@@ -184,30 +205,97 @@ function motherDuckApiUrl(action, params = {}) {
   return url.toString();
 }
 
-async function motherDuckApiGet(action, params = {}) {
-  const response = await fetch(motherDuckApiUrl(action, params), {
+/**
+ * Cache ETag per action+site. Saat data belum berubah backend menjawab 304
+ * tanpa body, sehingga polling 10 detik tidak lagi mengirim ulang payload penuh.
+ */
+const inboundEtagCache = new Map();
+
+function etagCacheKey(action) {
+  return `${action}|${currentSiteCode()}`;
+}
+
+function clearInboundEtagCache() {
+  inboundEtagCache.clear();
+}
+window.clearInboundEtagCache = clearInboundEtagCache;
+
+/**
+ * Entri cache selalu dikembalikan sebagai salinan.
+ * Tanpa ini, pemanggil yang mengubah objek hasil akan ikut mengubah isi cache,
+ * sehingga respons 304 berikutnya menyajikan data yang sudah tercemar — bug
+ * yang sangat sulit dilacak karena hanya muncul saat data tidak berubah.
+ */
+function cloneCachedPayload(value) {
+  if (value === null || typeof value !== "object") return value;
+  try {
+    return structuredClone(value);
+  } catch {
+    return JSON.parse(JSON.stringify(value));
+  }
+}
+
+async function inboundApiGet(action, params = {}, { useEtag = false } = {}) {
+  const cacheKey = etagCacheKey(action);
+  const cached = useEtag ? inboundEtagCache.get(cacheKey) : null;
+  const headers = {
+    Authorization: `Bearer ${window.getInboundSessionToken?.() || ""}`,
+  };
+  if (cached?.etag) headers["If-None-Match"] = cached.etag;
+
+  const response = await fetch(inboundApiUrl(action, params), {
     method: "GET",
-    credentials: "same-origin",
+    headers,
+    cache: "no-store",
+  });
+
+  if (response.status === 304 && cached) return cloneCachedPayload(cached.data);
+
+  const json = await response.json();
+  if (!response.ok || json.ok === false) {
+    throw new Error(json.message || "Inbound API error");
+  }
+  const data = json.data || json;
+  if (useEtag) {
+    const etag = response.headers.get("etag");
+    // Tanpa header ETag (mis. CORS belum mengekspos) cache dibuang supaya
+    // klien tidak pernah menampilkan data basi.
+    if (etag) inboundEtagCache.set(cacheKey, { etag, data: cloneCachedPayload(data) });
+    else inboundEtagCache.delete(cacheKey);
+  }
+  return data;
+}
+
+async function inboundApiPost(action, payload = {}) {
+  const response = await fetch(inboundApiUrl(action), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${window.getInboundSessionToken?.() || ""}`,
+    },
+    body: JSON.stringify({ site_code: currentSiteCode(), ...payload }),
   });
   const json = await response.json();
   if (!response.ok || json.ok === false) {
-    throw new Error(json.message || "MotherDuck API error");
+    throw new Error(json.message || "Inbound API error");
   }
+  // Setiap mutasi membuat snapshot lama usang; ETag harus dibuang agar
+  // polling berikutnya benar-benar mengambil data baru.
+  clearInboundEtagCache();
   return json.data || json;
 }
 
-async function motherDuckApiPost(action, payload = {}) {
-  const response = await fetch(motherDuckApiUrl(action), {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const json = await response.json();
-  if (!response.ok || json.ok === false) {
-    throw new Error(json.message || "MotherDuck API error");
-  }
-  return json.data || json;
+// Nama lama dipertahankan supaya seluruh call site yang ada tetap jalan.
+// Sengaja function declaration, bukan const: hanya bentuk ini yang tetap
+// terpasang di `window` seperti versi sebelumnya.
+function motherDuckApiUrl(action, params = {}) {
+  return inboundApiUrl(action, params);
+}
+function motherDuckApiGet(action, params = {}, options = {}) {
+  return inboundApiGet(action, params, options);
+}
+function motherDuckApiPost(action, payload = {}) {
+  return inboundApiPost(action, payload);
 }
 
 async function deleteTicketsByOperationalDate() {
@@ -457,18 +545,49 @@ function overlapDeltaCursorV12(value) {
   return new Date(parsed.getTime() - 2000).toISOString();
 }
 
-async function fetchV2Data() {
-  return motherDuckApiGet("state");
+/**
+ * Snapshot operasional saja (ticket + PO tiket + master checker).
+ * Dipakai setiap polling, jadi payload-nya sengaja dijaga tetap kecil dan
+ * memakai ETag supaya request yang tidak membawa perubahan dijawab 304.
+ */
+async function fetchOutputFormData() {
+  return inboundApiGet("state", {}, { useEtag: true });
 }
 
-async function fetchOutputFormData() {
-  return motherDuckApiGet("state");
+/**
+ * Master PO Superset untuk halaman Daftar. Payload ini berat tetapi jarang
+ * berubah (sync tiap 5 menit), sehingga hanya diambil saat benar-benar
+ * dibutuhkan dan selalu lewat ETag.
+ */
+async function fetchPoMasterData() {
+  return inboundApiGet("po_master", {}, { useEtag: true });
+}
+
+/**
+ * Payload lengkap: snapshot operasional + master PO, diambil paralel.
+ * Sebelumnya `state` mengirim keduanya dalam satu response sehingga setiap
+ * refresh menarik seluruh master PO walau layarnya tidak memerlukan.
+ */
+async function fetchV2Data() {
+  const [operational, poMaster] = await Promise.all([
+    fetchOutputFormData(),
+    fetchPoMasterData().catch((error) => {
+      // Master PO gagal tidak boleh menjatuhkan seluruh layar operasional.
+      console.error("Master PO gagal dimuat", error);
+      return null;
+    }),
+  ]);
+  return {
+    ...operational,
+    tablev2: Array.isArray(poMaster?.tablev2) ? poMaster.tablev2 : [],
+    po_master_synced_at: poMaster?.last_synced_at || null,
+  };
 }
 
 async function fetchOutputFormDelta(since) {
   const cursor = overlapDeltaCursorV12(since);
   if (!cursor) return fetchOutputFormData();
-  return motherDuckApiGet("state_delta", { since: cursor });
+  return inboundApiGet("state_delta", { since: cursor });
 }
 
 // V15.1 FIX:
@@ -1504,7 +1623,12 @@ async function initApi() {
         timestamp: outputResponse?.timestamp || new Date().toISOString(),
         kpiRaw: [],
         table: [],
-        tablev2: [],
+        // Master PO yang sudah pernah dimuat dipertahankan; layar Checker /
+        // Monitor tidak memerlukannya, tetapi membuangnya memaksa halaman
+        // Daftar mengunduh ulang seluruh master saat operator berpindah menu.
+        tablev2: getTableV2Rows(v2RawResponse || {}),
+        sites: outputResponse?.sites || v2RawResponse?.sites || [],
+        gates: outputResponse?.gates || v2RawResponse?.gates || [],
         outputForm: getOutputFormRows(outputResponse),
         inboundMp: getInboundMpRowsV15(
           outputResponse,
@@ -1514,6 +1638,7 @@ async function initApi() {
     } else {
       v2RawResponse = await fetchV2Data();
     }
+    applyServerSiteCatalog(v2RawResponse);
 
     state.dashboard = buildDashboardFromV2(v2RawResponse);
     state.options = state.dashboard.options || state.options;
@@ -1544,12 +1669,20 @@ async function initApi() {
 
 async function ensureFullDataForDaftar() {
   if (!hasApiV2()) return;
+  if (fullDataLoadBusy) return;
   const tableRows = getTableV2Rows(v2RawResponse || {});
   if (tableRows.length) return;
 
+  fullDataLoadBusy = true;
   try {
-    updateApiPill("loading", "Load Data V2...");
-    v2RawResponse = await fetchV2Data();
+    updateApiPill("loading", "Memuat master PO...");
+    // Snapshot operasional sudah ada di memori; yang kurang hanya master PO.
+    const poMaster = await fetchPoMasterData();
+    v2RawResponse = {
+      ...(v2RawResponse || {}),
+      tablev2: Array.isArray(poMaster?.tablev2) ? poMaster.tablev2 : [],
+      po_master_synced_at: poMaster?.last_synced_at || null,
+    };
     state.dashboard = buildDashboardFromV2(v2RawResponse);
     state.options = state.dashboard.options || state.options;
     updateApiPill("on", "API live");
@@ -1557,7 +1690,9 @@ async function ensureFullDataForDaftar() {
   } catch (err) {
     console.error(err);
     updateApiPill("error", "API error");
-    showToast("Load Data V2 gagal: " + err.message);
+    showToast("Master PO gagal dimuat: " + err.message);
+  } finally {
+    fullDataLoadBusy = false;
   }
 }
 
@@ -1574,12 +1709,15 @@ async function refreshDashboard() {
       v2RawResponse = {
         ...v2RawResponse,
         timestamp: outputResponse?.timestamp || new Date().toISOString(),
+        sites: outputResponse?.sites || v2RawResponse?.sites || [],
+        gates: outputResponse?.gates || v2RawResponse?.gates || [],
         outputForm: getOutputFormRows(outputResponse),
         inboundMp: getInboundMpRowsV15(
           outputResponse,
           v2RawResponse?.inboundMp || v2RawResponse?.inbound_mp || [],
         ),
       };
+      applyServerSiteCatalog(v2RawResponse);
       state.dashboard = buildDashboardFromV2(v2RawResponse);
       state.options = state.dashboard.options || state.options;
       state.lastCalled =
@@ -2124,7 +2262,7 @@ async function submitSecurity(e) {
       state.lastSecurityRows = savedRows;
       try {
         localStorage.setItem(
-          "inbound_cbt_last_print_rows",
+          "inbound_frozen_last_print_rows",
           JSON.stringify(savedRows),
         );
       } catch (err) {}
@@ -2168,7 +2306,7 @@ async function submitSecurity(e) {
       state.lastSecurityRows = newRows;
       try {
         localStorage.setItem(
-          "inbound_cbt_last_print_rows",
+          "inbound_frozen_last_print_rows",
           JSON.stringify(newRows),
         );
       } catch (err) {}
@@ -2715,12 +2853,20 @@ document.addEventListener("DOMContentLoaded", () => {
   tickClock();
   initShader();
   renderPage((location.hash || "#daftar").replace("#", ""), false);
-  initApi();
+
+  // Tanpa sesi, initApi() hanya menghasilkan dua request 401 dan menampilkan
+  // "API error" di layar login. Data baru diambil setelah login berhasil.
+  if (typeof isLoggedIn === "function" && isLoggedIn()) initApi();
 
   setInterval(() => {
-    if (["monitor", "laporan", "antrian", "checker"].includes(state.page)) {
-      renderPage(state.page, false);
+    if (!["monitor", "laporan", "antrian", "checker"].includes(state.page)) return;
+    // Melalui jalur auto sync, bukan renderPage() langsung: jalur ini
+    // mempertahankan scroll, filter, dan detail PO yang sedang terbuka.
+    if (typeof window.forceGlobalAutoSyncV11 === "function") {
+      window.forceGlobalAutoSyncV11();
+      return;
     }
+    renderPage(state.page, false);
   }, 60000);
 });
 
@@ -3130,7 +3276,7 @@ async function submitSecurity(e) {
       state.lastSecurityRows = savedRows;
       try {
         localStorage.setItem(
-          "inbound_cbt_last_print_rows",
+          "inbound_frozen_last_print_rows",
           JSON.stringify(savedRows),
         );
       } catch (err) {}
@@ -3171,7 +3317,7 @@ async function submitSecurity(e) {
       state.lastSecurityRows = newRows;
       try {
         localStorage.setItem(
-          "inbound_cbt_last_print_rows",
+          "inbound_frozen_last_print_rows",
           JSON.stringify(newRows),
         );
       } catch (err) {}
@@ -3821,6 +3967,8 @@ async function submitSecurity(e) {
         outputResponse?.timestamp ||
         v2RawResponse?.timestamp ||
         new Date().toISOString(),
+      sites: outputResponse?.sites || v2RawResponse?.sites || [],
+      gates: outputResponse?.gates || v2RawResponse?.gates || [],
       outputForm: rows,
       inboundMp: getInboundMpRowsV15(
         outputResponse,
@@ -3828,6 +3976,7 @@ async function submitSecurity(e) {
       ),
     };
 
+    applyServerSiteCatalog(v2RawResponse);
     state.dashboard = buildDashboardFromV2(v2RawResponse);
     state.options = state.dashboard.options || state.options;
     state.lastCalled =

@@ -19,6 +19,10 @@ test("successful login leaves the login screen before API initialization complet
   const apiPending = new Promise((resolve) => { resolveApi = resolve; });
   const renderedPages = [];
   const context = {
+    window: {
+      INBOUND_BACKEND_URL: "https://example.supabase.co/functions/v1/inbound-api",
+      setInboundSessionToken() {},
+    },
     fetch: async () => ({
       ok: true,
       json: async () => ({ data: { user: { username: "pandu", role: "DEVELOPER" } } }),

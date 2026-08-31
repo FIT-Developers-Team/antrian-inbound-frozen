@@ -19,9 +19,11 @@ function scheduleDeltaRefresh() {
 }
 
 async function fetchRealtimeConfig() {
-  const response = await fetch("/api/inbound?action=realtime_config", {
+  const response = await fetch(`${window.INBOUND_BACKEND_URL}?action=realtime_config`, {
     method: "GET",
-    credentials: "same-origin",
+    headers: {
+      Authorization: `Bearer ${window.getInboundSessionToken?.() || ""}`,
+    },
     cache: "no-store",
   });
   const json = await response.json();
