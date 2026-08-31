@@ -3565,7 +3565,7 @@ function monitorDetailRow(r = {}) {
     <td class="px-4 py-3 font-queue-id whitespace-nowrap">${esc(formatMinutesCompact(unloadingMinutes))}</td>
     <td class="px-4 py-3 font-bold text-center">${esc(callCount)}</td>
     <td class="px-4 py-3 whitespace-nowrap">${esc(wa)}</td>
-    <td class="px-4 py-3 whitespace-nowrap"><span class="inline-flex items-center px-3 py-1 rounded-full border text-xs font-bold ${sla.badgeClass}">${esc(sla.status)}</span></td>
+    <td class="px-4 py-3 whitespace-nowrap">${slaCountdownHtml(r)}</td>
   </tr>`;
 }
 
@@ -11001,7 +11001,7 @@ window.initShader = function initShaderDisabled() {
                 ? `<span class="text-xs font-bold text-warning">GR ${ticket.gr_progress || "0/0"}</span>`
                 : "-";
             const detailId = `waiting-detail-${String(ticket.ticket_id).replace(/[^A-Za-z0-9_-]/g, "_")}`;
-            return `<tr class="hover:bg-primary/5"><td class="px-4 py-3">${action}</td><td class="px-4 py-3"><button type="button" onclick="toggleWaitingDetailV16('${detailId}')" class="thin-tab rounded-lg px-3 py-2 text-xs font-bold">Detail PO</button></td><td class="px-4 py-3"><button onclick="printWaitingListTicket(${index})" class="thin-tab rounded-lg px-3 py-2 font-bold text-xs">Print</button></td><td class="px-4 py-3 text-sm whitespace-nowrap">${esc(ticket.created_at || "-")}</td><td class="px-4 py-3 font-queue-id text-primary">${esc(ticket.queue_no || "-")}</td><td class="px-4 py-3 min-w-[190px]">${esc(ticket.vendor_name || "-")}</td><td class="px-4 py-3">${esc(ticket.fleet_type || "-")}</td><td class="px-4 py-3 font-queue-id">${esc(ticket.plat_number || "-")}</td><td class="px-4 py-3">${ticket.po_rows?.length || 1}</td><td class="px-4 py-3">${gateChipsHtml(ticket.gate)}</td><td class="px-4 py-3">${checkerStatusPill(status)}</td><td class="px-4 py-3 font-bold">${num(ticket.call_count || 0)}</td><td class="px-4 py-3 font-queue-id whitespace-nowrap">${esc(wait)}</td><td class="px-4 py-3">${num(ticket.total_po_qty || 0)}</td><td class="px-4 py-3 font-queue-id">${num(ticket.actual_quantity || 0)}</td><td class="px-4 py-3">${num(ticket.count_po_sku || 0)}</td><td class="px-4 py-3 whitespace-nowrap">${esc(ticket.checker_progress || "0/0")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(ticket.gr_progress || "0/0")}</td><td class="px-4 py-3 whitespace-nowrap"><span class="inline-flex rounded-full border px-2 py-1 text-xs font-bold ${sla.badgeClass}">${esc(sla.status)}</span></td></tr>
+            return `<tr class="hover:bg-primary/5"><td class="px-4 py-3">${action}</td><td class="px-4 py-3"><button type="button" onclick="toggleWaitingDetailV16('${detailId}')" class="thin-tab rounded-lg px-3 py-2 text-xs font-bold">Detail PO</button></td><td class="px-4 py-3"><button onclick="printWaitingListTicket(${index})" class="thin-tab rounded-lg px-3 py-2 font-bold text-xs">Print</button></td><td class="px-4 py-3 text-sm whitespace-nowrap">${esc(ticket.created_at || "-")}</td><td class="px-4 py-3 font-queue-id text-primary">${esc(ticket.queue_no || "-")}</td><td class="px-4 py-3 min-w-[190px]">${esc(ticket.vendor_name || "-")}</td><td class="px-4 py-3">${esc(ticket.fleet_type || "-")}</td><td class="px-4 py-3 font-queue-id">${esc(ticket.plat_number || "-")}</td><td class="px-4 py-3">${ticket.po_rows?.length || 1}</td><td class="px-4 py-3">${gateChipsHtml(ticket.gate)}</td><td class="px-4 py-3">${checkerStatusPill(status)}</td><td class="px-4 py-3 font-bold">${num(ticket.call_count || 0)}</td><td class="px-4 py-3 font-queue-id whitespace-nowrap">${esc(wait)}</td><td class="px-4 py-3">${num(ticket.total_po_qty || 0)}</td><td class="px-4 py-3 font-queue-id">${num(ticket.actual_quantity || 0)}</td><td class="px-4 py-3">${num(ticket.count_po_sku || 0)}</td><td class="px-4 py-3 whitespace-nowrap">${esc(ticket.checker_progress || "0/0")}</td><td class="px-4 py-3 whitespace-nowrap">${esc(ticket.gr_progress || "0/0")}</td><td class="px-4 py-3 whitespace-nowrap">${slaCountdownHtml(ticket)}</td></tr>
           <tr id="${detailId}" class="hidden waiting-detail-row-v15"><td colspan="19" class="p-0"><div class="waiting-detail-panel-v15"><div class="flex flex-wrap gap-4 mb-4 text-xs"><span><b>Created:</b> ${esc(ticket.created_at || ticket.register_time || "-")}</span><span><b>Driver:</b> ${esc(ticket.driver_name || "-")} · ${esc(ticket.driver_phone || ticket.phone_number || "-")}</span><span><b>Ticket:</b> ${esc(ticket.ticket_type || "REG")} · Slot ${esc(ticket.slot || "-")} · Gate ${esc(ticket.gate || "-")}</span><span><b>Start Unloading:</b> ${esc(ticket.start_unloading_at || "-")}</span><span><b>Finish Unloading:</b> ${esc(ticket.finish_unloading_at || "-")}</span><span><b>Checker:</b> ${esc(ticket.checker_progress || "0/0")}</span><span><b>GR:</b> ${esc(ticket.gr_progress || "0/0")}</span><span><b>WA Ticket:</b> ${esc(ticket.wa_ticket_status || ticket.po_rows?.[0]?.wa_ticket_status || "-")}</span><span><b>WA Handover:</b> ${esc(ticket.wa_handover_status || ticket.po_rows?.[0]?.wa_handover_status || "-")}</span></div><div class="overflow-x-auto"><table class="po-detail-table-v15"><thead><tr><th>PO Number</th><th>PO Qty</th><th>Actual Qty</th><th>SKU</th><th>Checker</th><th>Status Checker</th><th>Start Checker</th><th>Done Checker</th><th>GR Status</th><th>Done GR</th><th>SLA</th><th>Action</th></tr></thead><tbody>${waitingPoDetailRowsV15(ticket, role)}</tbody></table></div></div></td></tr>`;
           })
           .join("") ||
@@ -11017,65 +11017,14 @@ window.initShader = function initShaderDisabled() {
   };
   pageLaporan = window.pageLaporan;
 
-  window.getInboundSlaInfo = function getInboundSlaInfoV15(row = {}) {
-    const status = String(row.status || "").toUpperCase();
-    const targetHours = Number(
-      row.sla_target_hours ||
-        (typeof getSlaHours === "function"
-          ? getSlaHours(row.fleet_type, row.count_po_sku)
-          : 0) ||
-        0,
-    );
-    const targetMinutes = targetHours * 60;
-    const start = parseInboundDateSafe(row.start_unloading_at);
-    const doneGr = parseInboundDateSafe(row.done_gr_at);
-    if (status === "EXPIRED")
-      return {
-        status: "EXPIRED",
-        label: "Expired",
-        target_minutes: targetMinutes,
-        badgeClass: "bg-error/10 text-error border-error/30",
-      };
-    if (!start || !targetMinutes)
-      return {
-        status: "WAITING",
-        label: "Belum mulai",
-        target_minutes: targetMinutes,
-        badgeClass:
-          "bg-surface-container-high text-on-surface-variant border-outline-variant",
-      };
-    const end = doneGr || new Date();
-    const actualMinutes = Math.max(
-      0,
-      Math.floor((end.getTime() - start.getTime()) / 60000),
-    );
-    const delta = targetMinutes - actualMinutes;
-    const late = delta < 0;
-    const final = !!doneGr || row.all_done_gr;
-    return {
-      status: final
-        ? late
-          ? "LATE"
-          : "TERCAPAI"
-        : late
-          ? "SLA MISS"
-          : "ON PROCESS",
-      label: final
-        ? formatMinutesCompact(actualMinutes)
-        : delta >= 0
-          ? `Sisa ${formatMinutesCompact(delta)}`
-          : `Lewat ${formatMinutesCompact(Math.abs(delta))}`,
-      target_minutes: targetMinutes,
-      actual_minutes: actualMinutes,
-      delta_minutes: delta,
-      badgeClass: late
-        ? "bg-error/10 text-error border-error/30"
-        : final
-          ? "bg-success/10 text-success border-success/30"
-          : "bg-warning/10 text-warning border-warning/30",
-    };
-  };
-  getInboundSlaInfo = window.getInboundSlaInfo;
+  // getInboundSlaInfoV15 dihapus di V25.
+  //
+  // Fungsi itu memanggil `getSlaHours()` yang tidak pernah didefinisikan di
+  // mana pun dan membaca `row.sla_target_hours` yang saat itu tidak dikirim
+  // backend, sehingga target SLA selalu 0 dan setiap tiket melaporkan
+  // "Belum mulai". Penggantinya ada di blok V25 dan memakai target dari
+  // database. Kode lama sengaja tidak disimpan: membiarkannya berarti bug
+  // yang sama akan hidup kembali begitu urutan patch berubah.
 
   window.monitorStatusBadge = function monitorStatusBadgeV15(status = "") {
     return checkerStatusPill(status);
@@ -14339,7 +14288,7 @@ if (window.__exportCsvV19) {
 
   function tableV19(rows) {
     const sorted = [...rows].sort((a,b) => riskSort(a,b) || String(a.queue_no || "").localeCompare(String(b.queue_no || "")));
-    return `<article class="wm19-card wm19-table-card"><header class="wm19-card-head"><div><h3>Queue Operasional</h3><p>Panel utama untuk action SPV. Prioritas SLA tertinggi berada paling atas.</p></div><span class="wm19-chip">${numV19(rows.length)} total</span></header><div class="wm19-table-wrap"><table id="monitor-unified-table" class="wm19-table"><thead><tr><th>QUEUE</th><th>VENDOR / PLAT</th><th>STATUS</th><th>GATE</th><th>MENUNGGU</th><th>SLA</th><th>PROGRESS PO</th></tr></thead><tbody>${sorted.map((row) => { const status = safeStatus(row); const sla = getInboundSlaInfo(row); const slaText = sla.status === "SLA MISS" || sla.status === "LATE" ? sla.label : (sla.label || "On track"); const slaColor = (sla.status === "SLA MISS" || sla.status === "LATE") ? "color:rgb(var(--error))" : sla.status === "ON PROCESS" ? "color:rgb(var(--warning))" : "color:rgb(var(--success))"; return `<tr data-wm19-row="1"><td class="wm19-queue">${esc(row.queue_no || "-")}</td><td><b style="display:block;color:rgb(var(--on-surface));font-size:12px">${esc(row.vendor_name || "-")}</b>${esc(row.plat_number || "-")}</td><td><span class="wm19-status" style="${statusStyle(status)}">${esc(displayStatus(status))}</span></td><td>${gateChipsHtml(row.gate)}</td><td>${esc(rowWaiting(row))}</td><td style="font-weight:800;${slaColor}">${esc(slaText)}</td><td>${esc(row.checker_progress || row.gr_progress || `${row.ticket_po_count || 0} PO`)}</td></tr>`; }).join("") || `<tr><td colspan="7" class="wm19-empty">Belum ada data antrian.</td></tr>`}</tbody></table></div><footer class="wm19-foot">Menampilkan seluruh <b>${numV19(rows.length)} kendaraan</b> · scroll di dalam panel · urutan berdasarkan risiko SLA.</footer></article>`;
+    return `<article class="wm19-card wm19-table-card"><header class="wm19-card-head"><div><h3>Queue Operasional</h3><p>Panel utama untuk action SPV. Prioritas SLA tertinggi berada paling atas.</p></div><span class="wm19-chip">${numV19(rows.length)} total</span></header><div class="wm19-table-wrap"><table id="monitor-unified-table" class="wm19-table"><thead><tr><th>QUEUE</th><th>VENDOR / PLAT</th><th>STATUS</th><th>GATE</th><th>MENUNGGU</th><th>SLA</th><th>PROGRESS PO</th></tr></thead><tbody>${sorted.map((row) => { const status = safeStatus(row); const sla = getInboundSlaInfo(row); const slaText = sla.status === "SLA MISS" || sla.status === "LATE" ? sla.label : (sla.label || "On track"); const slaColor = (sla.status === "SLA MISS" || sla.status === "LATE") ? "color:rgb(var(--error))" : sla.status === "ON PROCESS" ? "color:rgb(var(--warning))" : "color:rgb(var(--success))"; return `<tr data-wm19-row="1"><td class="wm19-queue">${esc(row.queue_no || "-")}</td><td><b style="display:block;color:rgb(var(--on-surface));font-size:12px">${esc(row.vendor_name || "-")}</b>${esc(row.plat_number || "-")}</td><td><span class="wm19-status" style="${statusStyle(status)}">${esc(displayStatus(status))}</span></td><td>${gateChipsHtml(row.gate)}</td><td>${esc(rowWaiting(row))}</td><td>${slaCountdownHtml(row)}</td><td>${esc(row.checker_progress || row.gr_progress || `${row.ticket_po_count || 0} PO`)}</td></tr>`; }).join("") || `<tr><td colspan="7" class="wm19-empty">Belum ada data antrian.</td></tr>`}</tbody></table></div><footer class="wm19-foot">Menampilkan seluruh <b>${numV19(rows.length)} kendaraan</b> · scroll di dalam panel · urutan berdasarkan risiko SLA.</footer></article>`;
   }
 
   window.wmFilterV19 = function wmFilterV19(input) {
@@ -14839,5 +14788,589 @@ if (window.__exportCsvV19) {
         localStorage.getItem("inboundSidebarHidden") === "1" ? "false" : "true",
       );
     }
+  });
+})();
+
+/* ==========================================================================
+ * V25 — KEDATANGAN, MULAI BONGKAR, DAN HITUNG MUNDUR SLA
+ *
+ * Empat hal yang diperbaiki di sini:
+ *
+ * 1. Hitung mundur SLA sebelumnya MATI TOTAL. getInboundSlaInfoV15 memanggil
+ *    `getSlaHours()` yang tidak pernah didefinisikan di mana pun, dan membaca
+ *    `row.sla_target_hours` yang tidak pernah dikirim backend. Target selalu
+ *    bernilai 0, sehingga setiap tiket di setiap layar melaporkan
+ *    "Belum mulai" — termasuk truk yang sudah dibongkar berjam-jam.
+ *
+ * 2. `tickets.arrived_at` ada di database sejak awal tetapi tidak pernah dapat
+ *    diisi: tidak ada satu pun kontrol UI untuk mencatat jam kedatangan.
+ *    Waktu tunggu driver selama ini dihitung dari jam input data.
+ *
+ * 3. Memulai bongkar mengharuskan operator membuka panel dan memilih PO satu
+ *    per satu. Tidak ada aksi tunggal "mulai bongkar sekarang".
+ *
+ * 4. Tiga interval satu detik berjalan bersamaan dan tidak pernah berhenti saat
+ *    tab disembunyikan. Di layar TV monitor dan ponsel di saku, itu pemborosan
+ *    daya yang terus-menerus.
+ * ========================================================================== */
+(function installInboundOperationsV25() {
+  if (window.__inboundOperationsV25Installed) return;
+  window.__inboundOperationsV25Installed = true;
+
+  const MINUTE = 60000;
+
+  // ------------------------------------------------------------------------
+  // 1. TICKER BERSAMA — satu interval untuk seluruh elemen live
+  // ------------------------------------------------------------------------
+  const tickHandlers = new Map();
+  let tickTimer = null;
+
+  function runTickHandlers() {
+    for (const [name, handler] of tickHandlers) {
+      try {
+        handler();
+      } catch (error) {
+        console.error("Tick handler gagal:", name, error);
+      }
+    }
+  }
+
+  function startSharedTicker() {
+    if (tickTimer || document.visibilityState === "hidden") return;
+    runTickHandlers();
+    tickTimer = setInterval(runTickHandlers, 1000);
+  }
+
+  function stopSharedTicker() {
+    if (!tickTimer) return;
+    clearInterval(tickTimer);
+    tickTimer = null;
+  }
+
+  /** Mendaftarkan pembaru live. Nama yang sama menimpa pendaftaran sebelumnya. */
+  window.inboundRegisterTick = function inboundRegisterTick(name, handler) {
+    if (typeof handler !== "function") return;
+    tickHandlers.set(name, handler);
+    startSharedTicker();
+  };
+  window.inboundUnregisterTick = function inboundUnregisterTick(name) {
+    tickHandlers.delete(name);
+    if (!tickHandlers.size) stopSharedTicker();
+  };
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") stopSharedTicker();
+    else startSharedTicker();
+  });
+
+  // Ambil alih tiga interval satu detik yang sebelumnya berjalan sendiri-sendiri.
+  window.startLiveWaitingTimer = function startLiveWaitingTimerV25() {
+    try {
+      if (typeof liveWaitingTimer !== "undefined" && liveWaitingTimer) {
+        clearInterval(liveWaitingTimer);
+        liveWaitingTimer = null;
+      }
+    } catch (error) {
+      /* liveWaitingTimer hanya ada di scope modul; abaikan bila tidak terjangkau. */
+    }
+    if (window.__wmLiveSlaTimer) {
+      clearInterval(window.__wmLiveSlaTimer);
+      window.__wmLiveSlaTimer = null;
+    }
+    // refreshLiveWaitingCells sudah memanggil updateLiveSlaCells,
+    // refreshLiveEstimateCells, dan wmRefreshLiveSlaCells secara berantai.
+    window.inboundRegisterTick("live-waiting", () => {
+      if (typeof refreshLiveWaitingCells === "function") refreshLiveWaitingCells();
+    });
+  };
+  try {
+    startLiveWaitingTimer = window.startLiveWaitingTimer;
+  } catch (error) {}
+
+  // ------------------------------------------------------------------------
+  // 2. INTI SLA
+  // ------------------------------------------------------------------------
+
+  /**
+   * Target SLA dalam jam. Nilai dari server (`inbound_sla_target_hours`) selalu
+   * menang; aturan di browser hanya cadangan untuk baris lama atau data demo.
+   */
+  function slaTargetHoursV25(row = {}) {
+    const server = Number(row.sla_target_hours || 0);
+    if (Number.isFinite(server) && server > 0) return server;
+    if (typeof getInboundSlaHours === "function") {
+      const local = Number(getInboundSlaHours(row) || 0);
+      if (Number.isFinite(local) && local > 0) return local;
+    }
+    return 0;
+  }
+
+  function timeOf(value) {
+    const parsed =
+      typeof parseInboundDateSafe === "function"
+        ? parseInboundDateSafe(value)
+        : value
+          ? new Date(value)
+          : null;
+    return parsed && !Number.isNaN(parsed.getTime()) ? parsed.getTime() : null;
+  }
+
+  function firstTime(row, keys) {
+    for (const key of keys) {
+      const value = timeOf(row?.[key]);
+      if (value) return value;
+    }
+    return null;
+  }
+
+  /**
+   * Satu sumber kebenaran untuk seluruh tampilan SLA.
+   *
+   * phase:
+   *   EXPIRED   tiket dibatalkan
+   *   NO_SLA    armada tanpa target SLA
+   *   WAITING   belum mulai bongkar — yang berjalan adalah jam tunggu
+   *   RUNNING   sedang bongkar — hitung mundur berjalan
+   *   DONE      selesai, dinilai tepat waktu atau lewat
+   */
+  function slaStateV25(row = {}, now = Date.now()) {
+    const targetHours = slaTargetHoursV25(row);
+    const targetMs = targetHours * 60 * MINUTE;
+    const status = String(row.status || "").trim().toUpperCase();
+
+    const startedAt = firstTime(row, ["sla_started_at", "start_unloading_at"]);
+    const stoppedAt = firstTime(row, [
+      "sla_stopped_at",
+      "finish_unloading_at",
+      "ticket_done_gr_at",
+      "done_gr_at",
+      "completed_at",
+      "expired_at",
+    ]);
+    const deadlineAt =
+      firstTime(row, ["sla_deadline_at"]) ||
+      (startedAt && targetMs ? startedAt + targetMs : null);
+
+    const base = {
+      target_hours: targetHours,
+      target_minutes: targetHours * 60,
+      started_at: startedAt,
+      stopped_at: stoppedAt,
+      deadline_at: deadlineAt,
+    };
+
+    if (status === "EXPIRED" || (!!row.expired_at && status !== "COMPLETED")) {
+      return { ...base, phase: "EXPIRED", status: "EXPIRED", label: "Expired",
+        tone: "error", remaining_ms: 0, elapsed_ms: 0 };
+    }
+    if (!targetHours) {
+      return { ...base, phase: "NO_SLA", status: "NO SLA", label: "Tanpa SLA",
+        tone: "muted", remaining_ms: 0, elapsed_ms: 0 };
+    }
+    if (!startedAt) {
+      return { ...base, phase: "WAITING", status: "BELUM MULAI",
+        label: `Target ${targetHours} jam`, tone: "muted", remaining_ms: targetMs, elapsed_ms: 0 };
+    }
+
+    const endedAt = stoppedAt || now;
+    const elapsedMs = Math.max(0, endedAt - startedAt);
+    const remainingMs = targetMs - elapsedMs;
+    const late = remainingMs < 0;
+
+    if (stoppedAt) {
+      return { ...base, phase: "DONE", status: late ? "SLA MISS" : "SLA OK",
+        label: formatDurationV25(elapsedMs), tone: late ? "error" : "success",
+        remaining_ms: remainingMs, elapsed_ms: elapsedMs };
+    }
+    return {
+      ...base,
+      phase: "RUNNING",
+      status: late ? "SLA MISS" : "ON PROCESS",
+      label: late
+        ? `Lewat ${formatDurationV25(-remainingMs)}`
+        : `Sisa ${formatDurationV25(remainingMs)}`,
+      // Peringatan 30 menit terakhir supaya SPV sempat menambah tenaga bongkar.
+      tone: late ? "error" : remainingMs <= 30 * MINUTE ? "warning" : "success",
+      remaining_ms: remainingMs,
+      elapsed_ms: elapsedMs,
+    };
+  }
+
+  /**
+   * "2j 29m" di atas satu jam, "19:59" di bawahnya.
+   *
+   * Satuan jam-menit cukup untuk rentang panjang, sedangkan jam mundur
+   * menit:detik memberi umpan balik yang terlihat berdetak saat sisa waktu
+   * menipis — justru di saat operator paling perlu memperhatikannya.
+   */
+  function formatDurationV25(ms) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (hours) return `${hours}j ${String(minutes).padStart(2, "0")}m`;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  window.slaStateV25 = slaStateV25;
+  window.slaTargetHoursV25 = slaTargetHoursV25;
+  window.formatDurationV25 = formatDurationV25;
+
+  const TONE_CLASS_V25 = {
+    success: "sla-tone-ok",
+    warning: "sla-tone-warn",
+    error: "sla-tone-late",
+    muted: "sla-tone-idle",
+  };
+
+  // ------------------------------------------------------------------------
+  // 3. HITUNG MUNDUR LIVE
+  // ------------------------------------------------------------------------
+
+  /**
+   * Elemen hitung mundur menyimpan seluruh datanya di atribut data-*, sehingga
+   * ticker cukup memperbarui teks dan kelas tanpa me-render ulang halaman.
+   */
+  function slaCountdownHtml(row = {}, extraClass = "") {
+    const state = slaStateV25(row);
+    const attrs = [
+      `data-sla-countdown="1"`,
+      `data-sla-target-hours="${state.target_hours}"`,
+      state.started_at ? `data-sla-started="${state.started_at}"` : "",
+      state.stopped_at ? `data-sla-stopped="${state.stopped_at}"` : "",
+      state.deadline_at ? `data-sla-deadline="${state.deadline_at}"` : "",
+      `data-sla-status="${esc(String(row.status || ""))}"`,
+      `data-sla-expired="${row.expired_at ? "1" : ""}"`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const title =
+      state.phase === "RUNNING" || state.phase === "DONE"
+        ? `Target ${state.target_hours} jam sejak mulai bongkar`
+        : state.phase === "WAITING"
+          ? "Hitung mundur mulai saat bongkar dimulai"
+          : "";
+    return `<span class="sla-countdown ${TONE_CLASS_V25[state.tone] || ""} ${extraClass}" ${attrs}${title ? ` title="${esc(title)}"` : ""}>${esc(state.label)}</span>`;
+  }
+  window.slaCountdownHtml = slaCountdownHtml;
+
+  function refreshSlaCountdownCells() {
+    const nodes = document.querySelectorAll('[data-sla-countdown="1"]');
+    if (!nodes.length) return;
+    const now = Date.now();
+    nodes.forEach((el) => {
+      const state = slaStateV25(
+        {
+          status: el.dataset.slaStatus || "",
+          expired_at: el.dataset.slaExpired ? now : "",
+          sla_target_hours: Number(el.dataset.slaTargetHours || 0),
+          sla_started_at: el.dataset.slaStarted ? Number(el.dataset.slaStarted) : "",
+          sla_stopped_at: el.dataset.slaStopped ? Number(el.dataset.slaStopped) : "",
+          sla_deadline_at: el.dataset.slaDeadline ? Number(el.dataset.slaDeadline) : "",
+        },
+        now,
+      );
+      if (el.textContent !== state.label) el.textContent = state.label;
+      const wanted = TONE_CLASS_V25[state.tone] || "";
+      Object.values(TONE_CLASS_V25).forEach((cls) => {
+        if (cls !== wanted) el.classList.remove(cls);
+      });
+      if (wanted && !el.classList.contains(wanted)) el.classList.add(wanted);
+    });
+  }
+  window.refreshSlaCountdownCells = refreshSlaCountdownCells;
+  window.inboundRegisterTick("sla-countdown", refreshSlaCountdownCells);
+
+  // ------------------------------------------------------------------------
+  // 4. MENGGANTI getInboundSlaInfo YANG RUSAK
+  //
+  // Bentuk kembaliannya dipertahankan agar seluruh pemanggil lama tetap jalan.
+  // ------------------------------------------------------------------------
+  window.getInboundSlaInfo = function getInboundSlaInfoV25(row = {}) {
+    const state = slaStateV25(row);
+    const badgeClass =
+      state.tone === "error"
+        ? "bg-error/10 text-error border-error/30"
+        : state.tone === "warning"
+          ? "bg-warning/10 text-warning border-warning/30"
+          : state.tone === "success"
+            ? "bg-success/10 text-success border-success/30"
+            : "bg-surface-container-high text-on-surface-variant border-outline-variant";
+    return {
+      ...state,
+      status: state.status,
+      label: state.label,
+      target_minutes: state.target_minutes,
+      targetLabel: state.target_hours ? `${state.target_hours} jam` : "-",
+      actual_minutes: Math.round(state.elapsed_ms / MINUTE),
+      delta_minutes: Math.round(state.remaining_ms / MINUTE),
+      diffMinutes: Math.round(state.remaining_ms / MINUTE),
+      outSla: state.remaining_ms < 0 && state.phase !== "WAITING",
+      className:
+        state.tone === "error"
+          ? "text-error"
+          : state.tone === "warning"
+            ? "text-warning"
+            : state.tone === "success"
+              ? "text-success"
+              : "text-on-surface-variant",
+      badgeClass,
+    };
+  };
+  try {
+    getInboundSlaInfo = window.getInboundSlaInfo;
+  } catch (error) {}
+
+  // ------------------------------------------------------------------------
+  // 5. JAM KEDATANGAN
+  // ------------------------------------------------------------------------
+
+  /** "YYYY-MM-DDTHH:MM" waktu lokal, format yang diminta input datetime-local. */
+  function toLocalInputValueV25(date = new Date()) {
+    const pad = (value) => String(value).padStart(2, "0");
+    return (
+      `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+      `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+    );
+  }
+  window.toLocalInputValueV25 = toLocalInputValueV25;
+
+  function arrivalFieldHtmlV25(value = "") {
+    return `<label class="flex flex-col gap-2 md:col-span-2" id="security-arrival-field-v25">
+      <span class="font-label-sm text-label-sm text-on-surface-variant uppercase">Jam Kedatangan</span>
+      <div class="arrival-input-row">
+        <input type="datetime-local" name="arrived_at" id="security-arrived-at-v25"
+               class="form-input" value="${esc(value || toLocalInputValueV25())}"
+               max="${esc(toLocalInputValueV25())}" />
+        <button type="button" class="arrival-now-btn" onclick="setArrivalFieldToNowV25()">
+          <span class="material-symbols-outlined" aria-hidden="true">schedule</span>Sekarang
+        </button>
+      </div>
+      <span class="form-help">Jam truk benar-benar tiba di pos, bukan jam pengisian form.
+        Waktu tunggu driver dihitung dari sini.</span>
+    </label>`;
+  }
+
+  window.setArrivalFieldToNowV25 = function setArrivalFieldToNowV25() {
+    const input = document.getElementById("security-arrived-at-v25");
+    if (!input) return;
+    input.value = toLocalInputValueV25();
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  /** Menyisipkan field kedatangan ke form Security setelah halaman ter-render. */
+  function injectArrivalFieldV25() {
+    const form = document.getElementById("security-form");
+    if (!form || document.getElementById("security-arrival-field-v25")) return;
+    const slot = form.querySelector('[name="slot"]');
+    const anchor = slot?.closest("label") || slot?.parentElement;
+    if (!anchor?.parentElement) return;
+    const holder = document.createElement("div");
+    holder.innerHTML = arrivalFieldHtmlV25();
+    const field = holder.firstElementChild;
+    if (field) anchor.parentElement.insertBefore(field, anchor.nextSibling);
+  }
+
+  window.getSecurityArrivalValueV25 = function getSecurityArrivalValueV25() {
+    const raw = String(document.getElementById("security-arrived-at-v25")?.value || "").trim();
+    if (!raw) return "";
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return "";
+    // Toleransi lima menit menyamai validasi di sisi database.
+    if (parsed.getTime() > Date.now() + 5 * MINUTE) return "";
+    return parsed.toISOString();
+  };
+
+  /** Mencatat atau mengoreksi kedatangan untuk tiket yang sudah ada. */
+  window.setArrivalForTicketV25 = async function setArrivalForTicketV25(ticketId, btn = null) {
+    const row = (state.dashboard?.queue || []).find(
+      (item) => String(item.ticket_id || "") === String(ticketId || ""),
+    );
+    if (!row) return showToast("Ticket tidak ditemukan. Refresh dulu.");
+
+    const currentMs = timeOf(row.arrived_at || row.waiting_started_at);
+    const current = currentMs ? new Date(currentMs) : new Date();
+    const answer = window.prompt(
+      `Jam kedatangan untuk ${row.queue_no || ticketId}\n` +
+        "Format 24 jam, contoh 08:35. Kosongkan lalu OK untuk memakai jam sekarang.",
+      `${String(current.getHours()).padStart(2, "0")}:${String(current.getMinutes()).padStart(2, "0")}`,
+    );
+    if (answer === null) return;
+
+    let arrivedAt = new Date();
+    const match = String(answer).trim().match(/^(\d{1,2})[:.]?(\d{2})$/);
+    if (String(answer).trim()) {
+      if (!match) return showToast("Format jam tidak dikenali. Contoh: 08:35", "error");
+      const candidate = new Date();
+      candidate.setHours(Number(match[1]), Number(match[2]), 0, 0);
+      // Jam yang lebih besar dari sekarang berarti shift malam kemarin.
+      if (candidate.getTime() > Date.now() + 5 * MINUTE) {
+        candidate.setDate(candidate.getDate() - 1);
+      }
+      arrivedAt = candidate;
+    }
+
+    if (btn) btn.disabled = true;
+    try {
+      await motherDuckApiPost("set_arrival", {
+        ticket_id: ticketId,
+        arrived_at: arrivedAt.toISOString(),
+      });
+      showToast(
+        `Kedatangan ${row.queue_no || ""} dicatat ${String(arrivedAt.getHours()).padStart(2, "0")}:${String(arrivedAt.getMinutes()).padStart(2, "0")}`,
+        "success",
+      );
+      await window.forceGlobalAutoSyncV11?.();
+    } catch (error) {
+      showToast(error?.message || "Gagal mencatat kedatangan.", "error");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+
+  // ------------------------------------------------------------------------
+  // 6. MULAI BONGKAR SEKALI TEKAN
+  // ------------------------------------------------------------------------
+  window.startUnloadingTicketV25 = async function startUnloadingTicketV25(ticketId, btn = null) {
+    const row = (state.dashboard?.queue || []).find(
+      (item) => String(item.ticket_id || "") === String(ticketId || ""),
+    );
+    if (!row) return showToast("Ticket tidak ditemukan. Refresh dulu.");
+
+    const status = String(row.status || "").toUpperCase();
+    if (["COMPLETED", "EXPIRED"].includes(status)) {
+      return showToast(`Ticket sudah ${status}.`, "error");
+    }
+
+    // Gate wajib: tanpa gate, tim lapangan tidak tahu ke dock mana truk diarahkan.
+    let gate = String(row.gate || "").trim();
+    if (!gate) {
+      const options = window.InboundSites?.gateOptions?.() || state.options?.gate || [];
+      const answer = window.prompt(
+        `Gate untuk ${row.queue_no || ticketId}?\nPilihan: ${options.map((g) => window.InboundSites?.gateLabel?.(g) || g).join(", ")}`,
+        options[0] || "",
+      );
+      if (answer === null) return;
+      const wanted = String(answer).trim().toUpperCase();
+      gate =
+        options.find((g) => g.toUpperCase() === wanted) ||
+        options.find((g) => (window.InboundSites?.gateLabel?.(g) || "").toUpperCase() === wanted) ||
+        "";
+      if (!gate) return showToast("Gate tidak dikenali.", "error");
+    }
+
+    const targetHours = slaTargetHoursV25(row);
+    const confirmText =
+      `Mulai bongkar ${row.queue_no || ticketId}?\n\n` +
+      `Gate: ${window.InboundSites?.gateLabel?.(gate) || gate}\n` +
+      `Plat: ${row.plat_number || "-"}\n` +
+      `Armada: ${row.fleet_type || "-"}\n` +
+      (targetHours
+        ? `Target SLA: ${targetHours} jam — hitung mundur mulai sekarang.`
+        : "Armada ini tidak punya target SLA.");
+    if (!window.confirm(confirmText)) return;
+
+    if (btn) {
+      btn.disabled = true;
+      btn.dataset.busy = "1";
+    }
+    try {
+      const result = await motherDuckApiPost("start_unloading", {
+        ticket_id: ticketId,
+        gate,
+        checker_name: getAuthUser?.()?.display_name || "",
+        checker_id: getAuthUser?.()?.username || "",
+      });
+      if (Array.isArray(result?.rows) && typeof replaceOutputRowsInRawResponse === "function") {
+        replaceOutputRowsInRawResponse(result.rows);
+      }
+      showToast(
+        targetHours
+          ? `Bongkar dimulai. Hitung mundur SLA ${targetHours} jam berjalan.`
+          : "Bongkar dimulai.",
+        "success",
+      );
+      await window.forceGlobalAutoSyncV11?.();
+    } catch (error) {
+      showToast(error?.message || "Gagal memulai bongkar.", "error");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        delete btn.dataset.busy;
+      }
+    }
+  };
+
+  // ------------------------------------------------------------------------
+  // 7. AKSI CEPAT DI KARTU CHECKER
+  // ------------------------------------------------------------------------
+  const checkerTicketCardBeforeV25 = window.checkerTicketCard;
+  window.checkerTicketCard = function checkerTicketCardV25(row = {}, index = 0) {
+    const html = checkerTicketCardBeforeV25
+      ? checkerTicketCardBeforeV25(row, index)
+      : `<article>${esc(row.queue_no || "-")}</article>`;
+    const status = String(row.status || "").trim().toUpperCase();
+    const ticketId = esc(String(row.ticket_id || ""));
+    if (!ticketId) return html;
+
+    const strip = [];
+
+    if (["WAITING", "CALLED"].includes(status)) {
+      // Untuk WAITING, aksi utama kartu tetap "Panggil ke Gate"; dua tombol
+      // dengan bobot visual sama membuat operator ragu mana yang harus ditekan.
+      // Mulai Bongkar baru menjadi aksi utama setelah driver dipanggil.
+      const emphasis = status === "CALLED" ? " v25-action-primary" : "";
+      strip.push(
+        `<button type="button" class="v25-action${emphasis}" onclick="startUnloadingTicketV25('${ticketId}', this)">` +
+          `<span class="material-symbols-outlined" aria-hidden="true">play_circle</span>Mulai Bongkar</button>`,
+      );
+    }
+    if (!["COMPLETED", "EXPIRED"].includes(status)) {
+      // Queue menyimpan tanggal sebagai teks "DD/MM/YYYY HH:MM:SS"; `new Date()`
+      // salah membacanya sebagai bulan/hari. parseInboundDateSafe menanganinya.
+      const arrivedMs = timeOf(row.arrived_at || row.waiting_started_at);
+      const arrived = arrivedMs ? new Date(arrivedMs) : null;
+      const arrivedLabel = arrived
+        ? `${String(arrived.getHours()).padStart(2, "0")}:${String(arrived.getMinutes()).padStart(2, "0")}`
+        : "belum";
+      strip.push(
+        `<button type="button" class="v25-action" onclick="setArrivalForTicketV25('${ticketId}', this)">` +
+          `<span class="material-symbols-outlined" aria-hidden="true">login</span>Datang ${esc(arrivedLabel)}</button>`,
+      );
+    }
+    if (status === "UNLOADING" || row.start_unloading_at) {
+      strip.push(
+        `<span class="v25-sla-chip">SLA ${slaCountdownHtml(row)}</span>`,
+      );
+    }
+    if (!strip.length) return html;
+
+    const block = `<div class="v25-action-strip">${strip.join("")}</div>`;
+    // Disisipkan tepat sebelum penutup <article> supaya tidak mengubah markup
+    // kartu yang sudah ada.
+    const closing = html.lastIndexOf("</article>");
+    return closing < 0 ? html + block : html.slice(0, closing) + block + html.slice(closing);
+  };
+  try {
+    checkerTicketCard = window.checkerTicketCard;
+  } catch (error) {}
+
+  // ------------------------------------------------------------------------
+  // 8. MENYISIPKAN FIELD KEDATANGAN SETIAP KALI HALAMAN DAFTAR DI-RENDER
+  // ------------------------------------------------------------------------
+  const renderPageBeforeV25 = window.renderPage || renderPage;
+  window.renderPage = function renderPageV25(page, toast = true) {
+    const result = renderPageBeforeV25.call(this, page, toast);
+    if (String(state.page || "") === "daftar") injectArrivalFieldV25();
+    if (typeof refreshSlaCountdownCells === "function") refreshSlaCountdownCells();
+    return result;
+  };
+  try {
+    renderPage = window.renderPage;
+  } catch (error) {}
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (String(state.page || "") === "daftar") injectArrivalFieldV25();
+    window.startLiveWaitingTimer();
   });
 })();

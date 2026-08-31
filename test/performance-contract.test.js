@@ -4,22 +4,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const frontendSource = fs.readFileSync(
-  path.join(__dirname, "..", "js", "api_v2.js"),
-  "utf8",
-);
-const appSource = fs.readFileSync(
-  path.join(__dirname, "..", "js", "app.js"),
-  "utf8",
-);
-const styleSource = fs.readFileSync(
-  path.join(__dirname, "..", "style.css"),
-  "utf8",
-);
-const backendSource = fs.readFileSync(
-  path.join(__dirname, "..", "api", "inbound.js"),
-  "utf8",
-);
+// Normalisasi akhir baris: berkas dapat ter-checkout sebagai CRLF di Windows
+// dan LF di CI Linux. Assertion pada teks sumber tidak boleh bergantung pada itu.
+const readSource = (...segments) =>
+  fs.readFileSync(path.join(__dirname, "..", ...segments), "utf8").replace(/\r\n/g, "\n");
+
+const frontendSource = readSource("js", "api_v2.js");
+const appSource = readSource("js", "app.js");
+const styleSource = readSource("style.css");
+const backendSource = readSource("api", "inbound.js");
 
 function extractFunction(source, signature, nextSignature) {
   const start = source.indexOf(signature);
@@ -180,10 +173,7 @@ test("backend delta endpoint is authenticated and accepts a cursor", () => {
 });
 
 test("realtime broadcast only signals clients and keeps polling as fallback", () => {
-  const indexSource = fs.readFileSync(
-    path.join(__dirname, "..", "index.html"),
-    "utf8",
-  );
+  const indexSource = readSource("index.html");
   const realtimeSource = fs.readFileSync(
     path.join(__dirname, "..", "js", "realtime_client_source.js"),
     "utf8",

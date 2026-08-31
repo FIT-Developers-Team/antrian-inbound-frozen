@@ -431,6 +431,11 @@ async function submitSecurityRowsToBackend(rows = []) {
         registered_by: master.registered_by,
         unload_sla: master.unload_sla,
         source: master.source || "Security Web",
+        // Jam kedatangan aktual dari form Security. Bila kosong, backend memakai
+        // jam server agar waktu tunggu driver tetap terhitung.
+        // `globalThis`, bukan `window`: fungsi ini juga dijalankan di sandbox vm
+        // oleh test kontrak, dan di sana `window` tidak ada.
+        arrived_at: master.arrived_at || globalThis.getSecurityArrivalValueV25?.() || "",
       },
       pos: ticketRows.map((row) => ({
         ticket_po_id: row.ticket_po_id,
@@ -3892,6 +3897,17 @@ async function submitSecurity(e) {
 
   const INTERVAL_MS = 10000;
   const FULL_REFRESH_MS = 5 * 60 * 1000;
+  // Polling adaptif: tetap 10 detik selama ada perubahan, lalu melambat
+  // bertahap sampai 60 detik saat gudang benar-benar sepi. Dengan ETag, siklus
+  // sepi hanya menghasilkan HTTP 304 tanpa body — tetapi setiap siklus tetap
+  // membangunkan radio perangkat, dan itulah yang dihemat di sini.
+  const IDLE_STEP_MS = 10000;
+  const MAX_INTERVAL_MS = 60000;
+  // Melambat baru dimulai setelah tiga siklus tanpa perubahan supaya jeda
+  // singkat antar-truk tidak langsung menurunkan responsivitas.
+  const IDLE_GRACE_CYCLES = 3;
+  let idleCycles = 0;
+  let currentIntervalMs = INTERVAL_MS;
   let timer = null;
   let busy = false;
   let lastSignature = "";
@@ -4036,6 +4052,8 @@ async function submitSecurity(e) {
         lastSignature = signature;
       }
 
+      applyAdaptiveIntervalV11(changed, forceUi);
+
       if (
         (changed || uiPending || forceUi) &&
         typeof window.onGlobalAutoSyncDataChangedV11 === "function"
@@ -4069,13 +4087,40 @@ async function submitSecurity(e) {
     }
   }
 
+  /**
+   * Menghitung ulang jeda polling dan menjadwalkan ulang bila berubah.
+   *
+   * Sinkron paksa berasal dari aksi operator, sinyal realtime, atau tab yang
+   * kembali terlihat. Semuanya menandakan ada kegiatan, bukan siklus sepi,
+   * jadi tidak boleh ikut menambah hitungan idle — kalau ikut dihitung, menekan
+   * Refresh berkali-kali justru mendorong polling ke jeda paling lambat.
+   */
+  function applyAdaptiveIntervalV11(changed, forced = false) {
+    idleCycles = changed || forced ? 0 : idleCycles + 1;
+    const steps = Math.max(0, idleCycles - IDLE_GRACE_CYCLES);
+    const next = Math.min(INTERVAL_MS + steps * IDLE_STEP_MS, MAX_INTERVAL_MS);
+    if (next === currentIntervalMs || stopped) return;
+    currentIntervalMs = next;
+    scheduleAutoSyncV11();
+  }
+
+  function scheduleAutoSyncV11() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(() => runAutoSyncV11(false), currentIntervalMs);
+  }
+
+  window.getAutoSyncIntervalV11 = function getAutoSyncIntervalV11() {
+    return currentIntervalMs;
+  };
+
   window.startGlobalAutoSyncV11 = function startGlobalAutoSyncV11() {
     stopped = false;
-    if (timer) clearInterval(timer);
+    idleCycles = 0;
+    currentIntervalMs = INTERVAL_MS;
 
     updateSyncIndicatorV11("online", "Sinkron otomatis aktif");
     setTimeout(() => runAutoSyncV11(false), 1200);
-    timer = setInterval(() => runAutoSyncV11(false), INTERVAL_MS);
+    scheduleAutoSyncV11();
   };
 
   window.stopGlobalAutoSyncV11 = function stopGlobalAutoSyncV11() {
@@ -4086,6 +4131,7 @@ async function submitSecurity(e) {
   };
 
   window.forceGlobalAutoSyncV11 = function forceGlobalAutoSyncV11() {
+    // Ritme cepat dikembalikan oleh applyAdaptiveIntervalV11 lewat flag forced.
     return runAutoSyncV11(true);
   };
 
@@ -4214,6 +4260,16 @@ async function submitSecurity(e) {
       created_at: created,
       register_time: registerTime,
       called_at: dateField("called_at", "called at", "last_call_at"),
+      // Kedatangan aktual dan jam SLA yang dihitung server. Tanpa dipetakan di
+      // sini, seluruh kolom baru hilang sebelum sampai ke layar: fungsi ini
+      // adalah daftar putih, bukan penyalin seluruh baris.
+      arrived_at: dateField("arrived_at", "arrived at"),
+      waiting_started_at: dateField("waiting_started_at", "arrived_at", "created_at"),
+      waiting_stopped_at: dateField("waiting_stopped_at", "start_unloading_at"),
+      sla_started_at: dateField("sla_started_at", "start_unloading_at"),
+      sla_stopped_at: dateField("sla_stopped_at"),
+      sla_deadline_at: dateField("sla_deadline_at"),
+      site_code: getCell(row, ["site_code", "site code"], ""),
       start_unloading_at: dateField("start_unloading_at", "start unloading at"),
       finish_unloading_at: dateField(
         "finish_unloading_at",
@@ -4442,6 +4498,20 @@ async function submitSecurity(e) {
         all_checker_done: allCheckerDone,
         all_done_gr: allDoneGr,
         called_at: earliestDateTextV15(poRows.map((row) => row.called_at)),
+        // Satu tiket punya satu kedatangan dan satu jam mulai bongkar walaupun
+        // barisnya terpecah per PO.
+        arrived_at: earliestDateTextV15(poRows.map((row) => row.arrived_at)),
+        waiting_started_at: earliestDateTextV15(
+          poRows.map((row) => row.waiting_started_at),
+        ),
+        sla_started_at: earliestDateTextV15(
+          poRows.map((row) => row.sla_started_at),
+        ),
+        sla_deadline_at: earliestDateTextV15(
+          poRows.map((row) => row.sla_deadline_at),
+        ),
+        // Berhenti hanya ketika PO terakhir selesai.
+        sla_stopped_at: latestDateTextV15(poRows.map((row) => row.sla_stopped_at)),
         start_unloading_at: earliestDateTextV15(
           poRows.map((row) => row.start_unloading_at),
         ),

@@ -4,7 +4,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.join(__dirname, "..");
-const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
+// Normalisasi akhir baris: berkas dapat ter-checkout sebagai CRLF di Windows
+// dan LF di CI Linux. Assertion pada teks sumber tidak boleh bergantung pada itu.
+const read = (file) =>
+  fs.readFileSync(path.join(root, file), "utf8").replace(/\r\n/g, "\n");
 const commercialSection = (source) => source.slice(
   source.indexOf("V23 — COMERCIAL"),
   source.indexOf("/* V19 — bulk Actual Qty", source.indexOf("V23 — COMERCIAL")),

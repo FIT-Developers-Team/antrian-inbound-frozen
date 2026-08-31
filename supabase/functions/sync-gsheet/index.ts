@@ -26,15 +26,22 @@ function duration(from: unknown, to: unknown): { text: string; minutes: number |
 
 function format(row: Record<string, unknown>): Record<string, unknown> {
   const finish = row.finish_unloading_at || "";
-  const driver = duration(row.created_at || row.register_time, row.start_unloading_at || finish);
+  // Waktu tunggu driver dihitung dari kedatangan aktual bila Security mencatatnya;
+  // jam input data hanya dipakai sebagai cadangan untuk tiket lama.
+  const driver = duration(
+    row.waiting_started_at || row.arrived_at || row.created_at || row.register_time,
+    row.start_unloading_at || finish,
+  );
   const unloading = duration(row.start_unloading_at, finish);
   const checker = duration(row.checker_started_at, row.checker_done_at);
   const gr = duration(row.checker_done_at, row.done_gr_at);
   const inbound = duration(row.start_unloading_at, finish || row.done_gr_at);
-  const fleet = clean(row.fleet_type).toUpperCase(); const sku = Number(row.ticket_total_sku || row.count_po_sku || 0);
-  const target = fleet.includes("FUSO") || fleet.includes("WINGBOX") ? 4 :
-    ["CDD", "CDDL", "CDE", "CDEL"].some((x) => fleet.includes(x)) ? (sku > 40 ? 4 : 2) :
-    ["VAN", "PICKUP", "PICK UP", "L300 BOX", "MOBIL", "GRANDMAX"].some((x) => fleet.includes(x)) ? 1 : 0;
+  // Target SLA berasal dari `inbound_sla_target_hours` di database. Sebelumnya
+  // fungsi ini menghitung sendiri dengan aturan yang berbeda dari js/app.js —
+  // VAN/PICKUP/MOBIL/L300 1 jam di sini tetapi 2 jam di layar, dan RODA 2 serta
+  // DROP-OFF dianggap tanpa SLA — sehingga angka di sheet tidak pernah cocok
+  // dengan angka yang dilihat operator.
+  const target = Number(row.sla_target_hours || 0);
   const status = clean(row.status).toUpperCase();
   const sla = status.includes("EXPIRED") ? "EXPIRED" : !target ? "NO SLA" : !row.start_unloading_at ? "WAITING START UNLOADING" :
     Number(inbound.minutes || 0) > target * 60 ? "SLA MISS" : status === "COMPLETED" ? "SLA OK" : "ON PROCESS";
@@ -61,8 +68,11 @@ function format(row: Record<string, unknown>): Record<string, unknown> {
     checker_duration_minutes: checker.minutes, gr_status: row.gr_status || "", done_gr_by: "", gr_wait_duration: gr.text,
     gr_wait_minutes: gr.minutes, inbound_sla_duration: inbound.text, inbound_sla_minutes: inbound.minutes,
     wa_ticket_status: "", wa_ticket_sent_at: "", wa_ticket_error: "", wa_ticket_target: "",
-    // Kolom gudang; Apps Script menambah header ini otomatis bila belum ada.
+    // Kolom gudang dan jam kedatangan; Apps Script menambah header ini otomatis
+    // bila belum ada di sheet.
     site_code: row.site_code || "",
+    arrived_at: dateTime(row.arrived_at),
+    sla_deadline_at: dateTime(row.sla_deadline_at),
   };
 }
 

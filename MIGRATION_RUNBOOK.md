@@ -46,11 +46,24 @@ sebagai `<gate_prefix>-NN`, contoh `SRG-GATE-INB-01-04`. Nilai awal SRG/BIT/CSI 
 
 ### Chart Superset
 
-`SUPERSET_CHART_ID` (default `20662`) menentukan saved chart yang dibaca. Chart
-lama difilter ke CBT (819) di sisi Superset, jadi arahkan variabel ini ke chart
-yang memuat gudang aktif. Berapa pun isi chart, `sync-superset` hanya menyimpan
-baris dengan `location_id` milik gudang aktif, dan `inbound_finalize_superset_sync`
-menolak stage yang memuat location_id di luar daftar tersebut.
+`sync-superset` bekerja dua tahap agar benar-benar menarik gudang yang aktif,
+bukan sekadar menyaring apa pun yang dikirim chart:
+
+1. **Jalur utama.** Membaca `query_context` dari chart `SUPERSET_CHART_ID`
+   (default `20662`), membuang filter pada kolom `SUPERSET_LOCATION_COLUMN`
+   (default `location_id`), menggantinya dengan daftar `location_id` gudang
+   aktif, lalu mengeksekusinya lewat `POST /api/v1/chart/data`. Dengan begitu
+   permintaan ke Superset sudah spesifik ke PGS (160).
+2. **Cadangan.** Bila chart tidak menyimpan `query_context` atau eksekusinya
+   gagal, sync jatuh ke `GET /api/v1/chart/{id}/data/?force=true` seperti
+   sebelumnya.
+
+Respons sync menyertakan `fetch_mode` (`query_context_filtered` atau
+`saved_chart`) supaya jalur mana yang terpakai selalu terlihat.
+
+Apa pun jalurnya, hanya baris dengan `location_id` milik gudang aktif yang
+disimpan, dan `inbound_finalize_superset_sync` menolak stage yang memuat
+location_id di luar daftar tersebut.
 
 ## Urutan deployment
 
@@ -76,6 +89,7 @@ menolak stage yang memuat location_id di luar daftar tersebut.
 - `SYNC_SECRET`
 - `SUPERSET_BASE_URL`
 - `SUPERSET_CHART_ID` (opsional, default `20662`)
+- `SUPERSET_LOCATION_COLUMN` (opsional, default `location_id`)
 - `SUPERSET_SESSION_COOKIE`
 - `GSHEET_SYNC_URL`
 - `GSHEET_SYNC_SECRET`
@@ -89,12 +103,62 @@ Keduanya tidak boleh disalin ke kode browser.
 `APP_ORIGINS` wajib berisi origin produksi. Bila kosong, CORS jatuh ke `*`; bila diisi,
 origin di luar daftar tidak pernah dipantulkan balik.
 
+## SLA, kedatangan, dan mulai bongkar
+
+### Satu sumber kebenaran SLA
+
+Target SLA sekarang dihitung `public.inbound_sla_target_hours(fleet, sku)` di
+database dan dibawa view `inbound_operational_rows` sebagai `sla_target_hours`,
+`sla_deadline_at`, `sla_started_at`, dan `sla_stopped_at`.
+
+Sebelumnya aturan yang sama ditulis ulang di tiga tempat dengan hasil berbeda:
+
+| Armada             | js/app.js   | sync-gsheet lama |
+| ------------------ | ----------- | ---------------- |
+| TRONTON/FUSO, WING | 4 jam       | 4 jam            |
+| CDD/CDDL/CDE/CDEL  | >40 SKU 4j  | >40 SKU 4j       |
+| VAN/PICKUP/MOBIL   | 2 jam       | **1 jam**        |
+| RODA 2             | 1 jam       | **tanpa SLA**    |
+| DROP-OFF           | 23 jam      | **tanpa SLA**    |
+
+Angka di Google Sheet karena itu tidak pernah cocok dengan angka yang dilihat
+operator. Aturan database memakai versi operasional (kolom kiri), dan
+`sync-gsheet` kini membaca `row.sla_target_hours` alih-alih menghitung sendiri.
+
+### Hitung mundur
+
+Browser tidak menghitung target sendiri; ia hanya mengurangkan waktu sekarang
+terhadap `sla_deadline_at`. Nada warnanya: abu-abu belum mulai, hijau masih
+longgar, kuning 30 menit terakhir, merah lewat target.
+
+Sebelum perbaikan ini hitung mundur **mati total** — `getInboundSlaInfoV15`
+memanggil `getSlaHours()` yang tidak pernah didefinisikan, sehingga target
+selalu 0 dan setiap tiket melaporkan "Belum mulai".
+
+### Jam kedatangan
+
+`tickets.arrived_at` ada sejak awal tetapi tidak pernah dapat diisi. Sekarang:
+
+- Form Security punya field **Jam Kedatangan** (default jam sekarang, tidak
+  boleh masa depan).
+- `POST inbound-api?action=set_arrival` mengoreksi kedatangan tiket yang sudah
+  berjalan. Security, Checker, dan SPV boleh memakainya.
+- Waktu tunggu driver dihitung dari `waiting_started_at`
+  (`coalesce(arrived_at, created_at)`), bukan dari jam pengisian form.
+
+### Mulai bongkar
+
+`POST inbound-api?action=start_unloading` memulai bongkar untuk seluruh PO yang
+masih `PENDING` dalam satu aksi, mengisi `arrived_at` dan `called_at` bila masih
+kosong, dan bersifat idempoten — menekan dua kali tidak menggeser jam mulai,
+karena itu akan memundurkan deadline SLA secara diam-diam.
+
 ## Kontrak performa
 
 | Action        | Isi                                       | Frekuensi        | Cache   |
 | ------------- | ----------------------------------------- | ---------------- | ------- |
-| `state`       | Baris operasional + checker + katalog site | Polling 10 detik | ETag    |
-| `state_delta` | Hanya baris yang berubah + id yang hidup   | Polling 10 detik | —       |
+| `state`       | Baris operasional + checker + katalog site | 10-60 detik adaptif | ETag |
+| `state_delta` | Hanya baris yang berubah + id yang hidup   | 10-60 detik adaptif | —    |
 | `po_master`   | Master PO Superset gudang aktif            | Saat buka Daftar | ETag    |
 | `export_rows` | Seluruh riwayat, berpaginasi               | Manual           | —       |
 
@@ -105,6 +169,22 @@ operasional dibatasi `INBOUND_SNAPSHOT_DAYS_BACK` (default 7 hari, maksimum 90).
 Respons ber-fingerprint mengirim `ETag`; klien mengirim `If-None-Match` dan menerima
 `304` tanpa body ketika data tidak berubah. Agar ini bekerja lintas asal,
 `access-control-expose-headers` wajib memuat `etag`.
+
+### Polling adaptif
+
+Jeda polling mulai dari 10 detik dan melebar 10 detik per siklus sepi sampai
+maksimum 60 detik, setelah masa tenggang tiga siklus. Perubahan data, aksi
+operator, atau tab yang kembali terlihat langsung mengembalikannya ke 10 detik.
+ETag sudah membuat siklus sepi tidak mengirim body, tetapi setiap siklus tetap
+membangunkan radio perangkat — itulah yang dihemat di sini. Layar TV monitor
+yang menyala semalaman adalah kasus yang paling diuntungkan.
+
+### Satu ticker untuk elemen live
+
+Sebelumnya tiga interval satu detik berjalan bersamaan (`liveWaitingTimer`,
+`__wmLiveSlaTimer`, `driverTrackTimer`) dan tidak satu pun berhenti saat tab
+disembunyikan. Sekarang semuanya melewati satu ticker bersama yang berhenti
+otomatis pada `visibilitychange`.
 
 ## Verifikasi cutover
 

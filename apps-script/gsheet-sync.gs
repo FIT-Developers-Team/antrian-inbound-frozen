@@ -26,7 +26,7 @@ var GSHEET_SYNC_HEADERS = [
   "checker_duration_minutes", "gr_status", "done_gr_by", "gr_wait_duration",
   "gr_wait_minutes", "inbound_sla_duration", "inbound_sla_minutes",
   "wa_ticket_status", "wa_ticket_sent_at", "wa_ticket_error", "wa_ticket_target",
-  "site_code"
+  "site_code", "arrived_at", "sla_deadline_at"
 ];
 
 var GSHEET_SYNC_PLAIN_TEXT_HEADERS = {
@@ -53,7 +53,9 @@ var GSHEET_SYNC_PLAIN_TEXT_HEADERS = {
   unloading_duration: true,
   checker_duration: true,
   gr_wait_duration: true,
-  inbound_sla_duration: true
+  inbound_sla_duration: true,
+  arrived_at: true,
+  sla_deadline_at: true
 };
 
 function doGet(e) {

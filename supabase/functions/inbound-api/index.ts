@@ -108,7 +108,9 @@ function canUseAction(session: Session | null, action: string): boolean {
   if (["superset_freshness", "ba_list", "ba_detail", "product_lookup", "create_ba"].includes(action)) {
     return ["SPV", "ADMIN", "DEVELOPER"].includes(role);
   }
-  return ["updatechecker", "startcheckerpo", "donecheckerpo", "donegrpo", "donegrpos", "handovergrn", "failcall", "update_ticket_status"].includes(action)
+  // Kedatangan dicatat Security di pos masuk; Checker dan SPV boleh mengoreksi.
+  if (action === "set_arrival") return ["SECURITY", "CHECKER", "SPV", "ADMIN", "DEVELOPER"].includes(role);
+  return ["updatechecker", "startcheckerpo", "donecheckerpo", "donegrpo", "donegrpos", "handovergrn", "failcall", "update_ticket_status", "start_unloading"].includes(action)
     && ["CHECKER", "SPV", "ADMIN", "DEVELOPER"].includes(role);
 }
 
@@ -278,6 +280,12 @@ Deno.serve(async (request) => {
       const data = await rpc("inbound_create_tickets_bulk", { p_payload: payload, p_actor: actor });
       const result = data as { created?: Record<string, unknown>[] };
       return jsonResponse(request, 201, { ok: true, data: action === "create_ticket" ? result.created?.[0] : data });
+    }
+    if (request.method === "POST" && action === "set_arrival") {
+      return jsonResponse(request, 200, { ok: true, data: await rpc("inbound_set_arrival", { p_payload: body, p_actor: actor }) });
+    }
+    if (request.method === "POST" && action === "start_unloading") {
+      return jsonResponse(request, 200, { ok: true, data: await rpc("inbound_start_unloading", { p_payload: body, p_actor: actor }) });
     }
     if (request.method === "POST" && action === "update_ticket_status") {
       return jsonResponse(request, 200, { ok: true, data: await rpc("inbound_update_ticket_status", { p_payload: body, p_actor: actor }) });

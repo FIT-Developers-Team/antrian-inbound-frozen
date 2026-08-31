@@ -3327,3 +3327,209 @@ input[type="time"].form-input {
   opacity: 0.78;
   word-break: break-word;
 }
+
+/* ==========================================================================
+ * V25 — KEDATANGAN, MULAI BONGKAR, DAN HITUNG MUNDUR SLA
+ * ========================================================================== */
+
+/* --------------------------------------------------------------------------
+ * Hitung mundur SLA
+ *
+ * Nada warna mengikuti keadaan, bukan sekadar dekorasi:
+ * idle belum mulai · ok masih longgar · warn 30 menit terakhir · late lewat target.
+ * ------------------------------------------------------------------------ */
+.sla-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.sla-countdown::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+.sla-tone-idle {
+  color: rgb(var(--on-surface-variant));
+  background: rgb(var(--surface-container-high) / 0.6);
+  border-color: rgb(var(--outline-variant));
+}
+.sla-tone-ok {
+  color: rgb(var(--success));
+  background: rgb(var(--success) / 0.12);
+  border-color: rgb(var(--success) / 0.3);
+}
+.sla-tone-warn {
+  color: rgb(var(--warning));
+  background: rgb(var(--warning) / 0.14);
+  border-color: rgb(var(--warning) / 0.35);
+}
+.sla-tone-late {
+  color: rgb(var(--error));
+  background: rgb(var(--error) / 0.14);
+  border-color: rgb(var(--error) / 0.38);
+}
+/* Titik berdenyut hanya pada keadaan terlambat, dan hanya bila pengguna
+   tidak meminta pengurangan gerakan. */
+@media (prefers-reduced-motion: no-preference) {
+  .sla-tone-late::before {
+    animation: sla-pulse 1.6s ease-in-out infinite;
+  }
+}
+@keyframes sla-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* --------------------------------------------------------------------------
+ * Input jam kedatangan
+ * ------------------------------------------------------------------------ */
+.arrival-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.arrival-input-row .form-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.arrival-now-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid rgb(var(--primary) / 0.32);
+  background: rgb(var(--primary) / 0.1);
+  color: rgb(var(--primary));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.arrival-now-btn:hover {
+  background: rgb(var(--primary) / 0.18);
+}
+.arrival-now-btn .material-symbols-outlined {
+  font-size: 17px;
+}
+
+/* --------------------------------------------------------------------------
+ * Baris aksi cepat pada kartu Checker
+ * ------------------------------------------------------------------------ */
+.v25-action-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed rgb(var(--outline-variant));
+}
+.v25-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 13px;
+  border-radius: 10px;
+  border: 1px solid rgb(var(--outline-variant));
+  background: rgb(var(--surface-container-high) / 0.6);
+  color: rgb(var(--on-surface));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.v25-action:hover {
+  background: rgb(var(--surface-container-highest));
+}
+.v25-action:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+.v25-action .material-symbols-outlined {
+  font-size: 18px;
+}
+/* Mulai Bongkar adalah aksi utama di kartu; bobot visualnya dibedakan supaya
+   operator tidak perlu membaca label untuk menemukannya. */
+.v25-action-primary {
+  border-color: rgb(var(--primary) / 0.4);
+  background: rgb(var(--primary-container));
+  color: rgb(var(--on-primary-container));
+}
+.v25-action-primary:hover {
+  background: rgb(var(--primary-container));
+  filter: brightness(1.08);
+}
+.v25-sla-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgb(var(--on-surface-variant));
+}
+@media (pointer: coarse) {
+  .v25-action {
+    min-height: 44px;
+  }
+  .arrival-now-btn {
+    min-height: 44px;
+  }
+}
+@media (max-width: 520px) {
+  .v25-action-strip .v25-action {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+  .v25-sla-chip {
+    margin-left: 0;
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Tab section Checker di layar sempit
+ *
+ * `.checker-tabs-v15` bersifat sticky. Di bawah 640px grid-nya jatuh menjadi
+ * satu kolom, sehingga tiga tab menumpuk menjadi header setinggi 181px yang
+ * menutupi kolom pencarian di bawahnya dan memakan seperempat layar.
+ * Deretan horizontal yang dapat digulir menjaga tingginya tetap satu baris.
+ * ------------------------------------------------------------------------ */
+@media (max-width: 639px) {
+  .checker-tabs-v15 > .grid {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+  .checker-tabs-v15 > .grid > * {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
+  .checker-tabs-v15 {
+    /* Bayangan tipis memberi tahu bahwa konten bergulir di bawah header. */
+    box-shadow: 0 6px 12px -10px rgb(0 0 0 / 0.55);
+  }
+}

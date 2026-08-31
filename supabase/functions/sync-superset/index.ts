@@ -34,24 +34,102 @@ function chartId(): string {
   return clean(Deno.env.get("SUPERSET_CHART_ID")) || "20662";
 }
 
-async function fetchChartRows(): Promise<Record<string, unknown>[]> {
-  const baseUrl = clean(Deno.env.get("SUPERSET_BASE_URL") || "https://dash.astronauts.id").replace(/\/$/, "");
+function locationColumn(): string {
+  return clean(Deno.env.get("SUPERSET_LOCATION_COLUMN")) || "location_id";
+}
+
+function supersetBaseUrl(): string {
+  return clean(Deno.env.get("SUPERSET_BASE_URL") || "https://dash.astronauts.id").replace(/\/$/, "");
+}
+
+function supersetHeaders(): Record<string, string> {
   const rawCookie = clean(Deno.env.get("SUPERSET_SESSION_COOKIE"));
   if (!rawCookie) throw new Error("SUPERSET_SESSION_COOKIE belum diset di Supabase Secrets.");
-  const response = await fetch(`${baseUrl}/api/v1/chart/${chartId()}/data/?force=true`, {
-    headers: {
-      accept: "application/json",
-      cookie: rawCookie.startsWith("session=") ? rawCookie : `session=${rawCookie}`,
-      referer: `${baseUrl}/`,
-    },
+  return {
+    accept: "application/json",
+    cookie: rawCookie.startsWith("session=") ? rawCookie : `session=${rawCookie}`,
+    referer: `${supersetBaseUrl()}/`,
+  };
+}
+
+function rowsFromPayload(payload: unknown): Record<string, unknown>[] {
+  const rows = (payload as { result?: { data?: unknown }[] } | null)?.result?.[0]?.data;
+  return Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [];
+}
+
+/**
+ * Menyuntikkan filter gudang ke query_context chart.
+ *
+ * Filter lokasi lama menempel di saved chart (CBT/819), sehingga menyalinnya
+ * apa adanya akan terus menarik gudang yang salah. Filter pada kolom lokasi
+ * dibuang lalu diganti dengan daftar location_id gudang aktif, sehingga sync
+ * benar-benar meminta PGS (160) ke Superset, bukan sekadar menyaring hasilnya.
+ */
+function withSiteFilter(queryContext: Record<string, unknown>, locationIds: string[]): Record<string, unknown> {
+  const column = locationColumn();
+  const queries = Array.isArray(queryContext.queries) ? queryContext.queries : [];
+  return {
+    ...queryContext,
+    force: true,
+    result_format: "json",
+    result_type: "full",
+    queries: queries.map((query) => {
+      const q = query as Record<string, unknown>;
+      const existing = Array.isArray(q.filters) ? (q.filters as Record<string, unknown>[]) : [];
+      return {
+        ...q,
+        filters: [
+          ...existing.filter((filter) => clean(filter?.col) !== column),
+          { col: column, op: "IN", val: locationIds },
+        ],
+      };
+    }),
+  };
+}
+
+/** Jalur utama: query_context chart + filter gudang aktif, dieksekusi via POST. */
+async function fetchRowsWithSiteFilter(locationIds: string[]): Promise<Record<string, unknown>[]> {
+  const baseUrl = supersetBaseUrl();
+  const headers = supersetHeaders();
+
+  const chartResponse = await fetch(`${baseUrl}/api/v1/chart/${chartId()}`, { headers });
+  if (!chartResponse.ok) throw new Error(`Baca chart gagal: HTTP ${chartResponse.status}`);
+  const chartPayload = await chartResponse.json();
+  const rawContext = chartPayload?.result?.query_context;
+  if (!rawContext) throw new Error("Chart tidak menyimpan query_context.");
+
+  const queryContext = typeof rawContext === "string" ? JSON.parse(rawContext) : rawContext;
+  const dataResponse = await fetch(`${baseUrl}/api/v1/chart/data`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify(withSiteFilter(queryContext, locationIds)),
+  });
+  if (!dataResponse.ok) throw new Error(`Eksekusi chart data gagal: HTTP ${dataResponse.status}`);
+  return rowsFromPayload(await dataResponse.json());
+}
+
+/** Cadangan: saved chart apa adanya, disaring di sisi kita. */
+async function fetchRowsFromSavedChart(): Promise<Record<string, unknown>[]> {
+  const response = await fetch(`${supersetBaseUrl()}/api/v1/chart/${chartId()}/data/?force=true`, {
+    headers: supersetHeaders(),
   });
   if (!response.ok) throw new Error(`Superset saved chart gagal: HTTP ${response.status}`);
-  const payload = await response.json();
-  const rows = payload?.result?.[0]?.data;
-  if (!Array.isArray(rows) || rows.length === 0) {
-    throw new Error("Snapshot Superset kosong/tidak valid; snapshot lama dipertahankan.");
+  return rowsFromPayload(await response.json());
+}
+
+async function fetchChartRows(locationIds: string[]): Promise<{ rows: Record<string, unknown>[]; mode: string }> {
+  try {
+    const rows = await fetchRowsWithSiteFilter(locationIds);
+    if (rows.length) return { rows, mode: "query_context_filtered" };
+    // Nol baris di sini biasanya berarti filter kolomnya keliru, bukan bahwa
+    // gudangnya benar-benar kosong; jatuh ke saved chart agar tetap ada data.
+    console.warn("sync-superset: filter query_context menghasilkan 0 baris, memakai saved chart.");
+  } catch (error) {
+    console.warn("sync-superset: query_context tidak dapat dipakai:", error instanceof Error ? error.message : error);
   }
-  return rows as Record<string, unknown>[];
+  const rows = await fetchRowsFromSavedChart();
+  if (!rows.length) throw new Error("Snapshot Superset kosong/tidak valid; snapshot lama dipertahankan.");
+  return { rows, mode: "saved_chart" };
 }
 
 /** Upsert stage berjalan paralel terbatas; sekuensial membuat sync lambat sekali. */
@@ -89,7 +167,7 @@ Deno.serve(async (request) => {
   try {
     const sites = await activeSites();
     const siteByLocation = new Map(sites.map((site) => [site.location_id, site]));
-    const rows = await fetchChartRows();
+    const { rows, mode } = await fetchChartRows(sites.map((site) => site.location_id));
 
     // Filter gudang dilakukan di sini, bukan hanya di Superset. Apa pun yang
     // dikembalikan chart, hanya location_id gudang aktif yang tersimpan.
@@ -137,7 +215,7 @@ Deno.serve(async (request) => {
     const retentionCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     await db.from("sync_runs").delete().lt("started_at", retentionCutoff);
     return jsonResponse(request, 200, { ok: true, data: {
-      ...data, run_id: runId, chart_id: chartId(),
+      ...data, run_id: runId, chart_id: chartId(), fetch_mode: mode,
       fetched_from_chart: rows.length, kept_for_active_sites: deduped.length, per_site: perSite,
     } });
   } catch (error) {
