@@ -1,45 +1,42 @@
 # =============================================================================
-# ANTRIAN INBOUND FROZEN — IMAGE PRODUKSI
+# ANTRIAN INBOUND FROZEN — IMAGE APLIKASI
 #
-# Aplikasi ini tidak punya langkah build: index.html, style.css, js/, dan
-# assets/ dikirim apa adanya sebagai modul ES. Karena itu image-nya hanya nginx
-# plus berkas statis — tidak ada Node, npm, maupun node_modules di dalamnya.
+# SATU kontainer: Node menyajikan berkas statis sekaligus melayani API.
 #
-# Satu tahap saja sudah cukup. Multi-stage build hanya bermanfaat bila ada
-# artefak yang perlu dikompilasi, dan di sini tidak ada.
+# Susunan sebelumnya memisahkan nginx dan API menjadi dua kontainer, dan setiap
+# kegagalan deployment yang terjadi bermuara pada sambungan di antara keduanya:
+# proxy hidup, API tidak, lalu operator melihat 502 — atau, lebih buruk lagi,
+# "username atau password salah". Menyatukannya menghapus seluruh kelas
+# kegagalan itu. Bila halaman termuat, API-nya pasti ikut hidup.
+#
+# Aplikasi ini tidak punya langkah build: index.html, style.css, dan js/ adalah
+# modul ES yang dikirim apa adanya.
 # =============================================================================
-FROM nginx:1.27-alpine
+FROM node:22-alpine
 
-# Konfigurasi ditulis sebagai template supaya `envsubst` milik entrypoint resmi
-# nginx dapat menyisipkan project ref Supabase saat kontainer dijalankan. Dengan
-# begitu image yang sama dapat dipakai untuk proyek Supabase mana pun tanpa
-# di-build ulang.
-COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
+WORKDIR /app
 
-# Dijalankan entrypoint resmi nginx sebelum server menyala; menurunkan direktif
-# `resolver` dari /etc/resolv.conf kontainer.
-COPY deploy/10-resolver.sh /docker-entrypoint.d/10-resolver.sh
-RUN chmod +x /docker-entrypoint.d/10-resolver.sh
+# Manifest disalin lebih dulu agar layer dependensi hanya dibangun ulang ketika
+# dependensinya benar-benar berubah, bukan setiap kali kode berubah.
+COPY api/package.json api/package-lock.json* ./
+RUN npm install --omit=dev --no-audit --no-fund
 
-# Hanya paket statis yang masuk. Semua hal lain — supabase/, test/, scripts/,
-# android/, data/ — dikecualikan lewat .dockerignore, bukan dihapus di sini.
-WORKDIR /usr/share/nginx/html
+# Kode server dan skema.
+COPY api/ ./api/
+COPY db/ ./db/
+
+# Paket statis. Hanya empat hal ini yang pernah disajikan ke browser.
 COPY index.html style.css ./
 COPY js/ ./js/
 COPY assets/ ./assets/
 
-# Alamat layanan API di jaringan compose.
-ENV API_UPSTREAM=http://api:8080
+USER node
 
-# Port yang didengarkan nginx. Samakan dengan setelan port aplikasi di platform
-# bila platform tersebut tidak membaca EXPOSE di bawah.
-ENV NGINX_PORT=80
+# Coolify membaca EXPOSE untuk menentukan port yang dirutekan proxy-nya.
+ENV PORT=3000
+EXPOSE 3000
 
-# Port bawaan lazim; platform yang membaca EXPOSE akan menemukan salah satunya.
-EXPOSE 80 3000 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-# Health check dijawab nginx sendiri di /healthz, tanpa menyentuh Supabase,
-# supaya backend yang sedang bermasalah tidak membuat Coolify mengira
-# kontainernya mati dan menggulung deployment yang sebenarnya sehat.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget --quiet --tries=1 --spider "http://localhost:${NGINX_PORT}/healthz" || exit 1
+CMD ["node", "api/server.mjs"]

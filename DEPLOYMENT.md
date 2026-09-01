@@ -24,17 +24,18 @@ nginx berjalan di server Anda sendiri.
 
 ## Arsitektur
 
-Tiga kontainer dari satu `docker-compose.yml`:
+Dua kontainer dari satu `docker-compose.yml`:
 
-| Layanan | Isi              | Tugas                                          |
-| ------- | ---------------- | ---------------------------------------------- |
-| `db`    | Postgres 17      | Data operasional                               |
-| `api`   | Node 22          | Seluruh API dan penjadwal sync Superset        |
-| `web`   | nginx            | Berkas statis + proksi `/api/inbound` ke `api` |
+| Layanan | Isi         | Tugas                                                  |
+| ------- | ----------- | ------------------------------------------------------ |
+| `db`    | Postgres 17 | Data operasional                                       |
+| `app`   | Node 22     | Berkas statis, API, dan penjadwal sync — satu proses    |
 
-Browser hanya berbicara dengan `web`. Karena API diproksikan pada origin yang
-sama, permintaan tidak pernah menjadi lintas asal — CORS, yang berulang kali
-menjadi satu-satunya penyebab kegagalan deployment ini, berhenti menjadi faktor.
+Satu proses menyajikan halaman DAN melayani API. Susunan sebelumnya memisahkan
+nginx dan API menjadi dua kontainer, dan setiap kegagalan deployment bermuara
+pada sambungan di antara keduanya: proxy hidup, API tidak, lalu layar
+menampilkan 502 — atau, lebih menyesatkan lagi, "username atau password salah".
+Sekarang bila halaman termuat, API-nya pasti ikut hidup.
 
 Postgres berada di host yang sama dengan API, jadi setiap kueri adalah
 panggilan lokal. Tidak ada cold start, dan tidak ada proyek yang ditangguhkan
@@ -44,13 +45,25 @@ setelah tujuh hari sepi.
 
 ## Langkah 1 — Buat aplikasi di Coolify
 
-| Pengaturan          | Nilai                    |
-| ------------------- | ------------------------ |
-| Build Pack          | **Docker Compose**       |
-| Compose file        | `docker-compose.yml`     |
-| Branch              | `main`                   |
-| Port                | `80`                     |
-| Health Check Path   | `/healthz`               |
+**Pilihan A — Docker Compose** (disarankan; Postgres ikut terpasang)
+
+| Pengaturan               | Nilai                |
+| ------------------------ | -------------------- |
+| Build Pack               | **Docker Compose**   |
+| Docker Compose Location  | `/docker-compose.yml`|
+| Branch                   | `main`               |
+
+**Pilihan B — Dockerfile** (bila Postgres disediakan terpisah sebagai resource
+Coolify)
+
+| Pengaturan          | Nilai           |
+| ------------------- | --------------- |
+| Build Pack          | **Dockerfile**  |
+| Dockerfile Location | `/Dockerfile`   |
+| Port                | `3000`          |
+| Health Check Path   | `/healthz`      |
+
+Pada Pilihan B, tambahkan `DATABASE_URL` yang menunjuk ke Postgres itu.
 
 ---
 

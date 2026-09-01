@@ -1,9 +1,9 @@
 /* ============================================================================
- * KONTRAK IMAGE PRODUKSI (COOLIFY)
+ * KONTRAK IMAGE PRODUKSI
  *
- * Coolify membangun dari Dockerfile. Berkas ini menjaga agar image tetap
- * ramping, tidak membawa rahasia, dan tidak mengulangi jebakan cache serta DNS
- * yang sudah pernah menggigit.
+ * Satu kontainer menyajikan berkas statis sekaligus melayani API. Berkas ini
+ * menjaga agar image tetap ramping, tidak membawa rahasia, dan tidak
+ * mengulangi jebakan cache yang sudah pernah menggigit.
  * ========================================================================== */
 
 const test = require("node:test");
@@ -12,19 +12,33 @@ const { read, exists, importModule } = require("./helpers");
 
 const dockerfile = read("Dockerfile");
 const dockerignore = read(".dockerignore");
-const nginx = read("deploy/nginx.conf.template");
-const resolver = read("deploy/10-resolver.sh");
+const compose = read("docker-compose.yml");
+const staticServer = read("api/static.mjs");
+const server = read("api/server.mjs");
 
 /* -- Build ----------------------------------------------------------------- */
 
-test("Dockerfile ada — inilah yang membuat build Coolify gagal", () => {
-  assert.ok(exists("Dockerfile"), "Coolify build pack Dockerfile menuntut berkas ini");
-  assert.ok(exists("deploy/nginx.conf.template"));
-  assert.ok(exists("deploy/10-resolver.sh"));
+test("Dockerfile dan compose ada di akar repo", () => {
+  // Coolify membaca keduanya dari akar; bila hilang, build pack apa pun gagal
+  // sebelum sempat menjalankan apa-apa.
+  assert.ok(exists("Dockerfile"));
+  assert.ok(exists("docker-compose.yml"));
+  assert.ok(exists("docker-compose.local.yml"));
+  assert.ok(exists("db/schema.sql"));
 });
 
-test("image hanya membawa paket statis, bukan backend atau perkakas", () => {
-  // Yang tidak pernah tersalin ke image mustahil bocor darinya.
+test("satu kontainer menyajikan statis dan API sekaligus", () => {
+  // Susunan dua kontainer (nginx + API) membuat setiap kegagalan deployment
+  // bermuara pada sambungan di antara keduanya: proxy hidup, API tidak, lalu
+  // operator melihat 502. Menyatukannya menghapus kelas kegagalan itu.
+  assert.match(dockerfile, /CMD \["node", "api\/server\.mjs"\]/);
+  assert.match(server, /createStaticHandler/);
+  assert.ok(!exists("deploy/nginx.conf.template"), "nginx tidak lagi dipakai");
+});
+
+test("image membawa kode, skema, dan paket statis — tidak lebih", () => {
+  assert.match(dockerfile, /COPY api\/ \.\/api\//);
+  assert.match(dockerfile, /COPY db\/ \.\/db\//);
   assert.match(dockerfile, /COPY index\.html style\.css \.\//);
   assert.match(dockerfile, /COPY js\/ \.\/js\//);
   assert.match(dockerfile, /COPY assets\/ \.\/assets\//);
@@ -35,9 +49,7 @@ test("image hanya membawa paket statis, bukan backend atau perkakas", () => {
 });
 
 test("konteks build mengecualikan yang berat dan yang rahasia", () => {
-  // Muatan statisnya ~270 KB; tanpa daftar ini konteks build ~225 MB, dan
-  // seluruhnya diunggah ke daemon pada setiap deploy.
-  ["node_modules/", "android/", ".git/", "supabase/", "test/", "scripts/", "data/"].forEach((entry) => {
+  ["node_modules/", "android/", ".git/", "test/", "scripts/", "data/"].forEach((entry) => {
     assert.ok(dockerignore.includes(entry), `${entry} harus dikecualikan dari konteks build`);
   });
   [".env", ".dev.vars", "*.pem"].forEach((entry) => {
@@ -45,12 +57,8 @@ test("konteks build mengecualikan yang berat dan yang rahasia", () => {
   });
 });
 
-test("image tidak menjalankan Node maupun memasang dependensi", () => {
-  // Aplikasi ini tidak punya langkah build; menambahkan npm ke image hanya
-  // memperbesar permukaan serangan tanpa memberi apa pun.
-  assert.doesNotMatch(dockerfile, /npm (install|ci|run)/);
-  assert.doesNotMatch(dockerfile, /FROM node/);
-  assert.match(dockerfile, /FROM nginx:[\d.]+-alpine/);
+test("berjalan sebagai pengguna tak berhak", () => {
+  assert.match(dockerfile, /^USER node$/m);
 });
 
 /* -- Cache ----------------------------------------------------------------- */
@@ -58,127 +66,82 @@ test("image tidak menjalankan Node maupun memasang dependensi", () => {
 test("js dan css tidak pernah di-cache lama", () => {
   // Hanya index.html yang menautkan app.js?v=N dan style.css?v=N. Sebelas modul
   // yang diimpor app.js diminta tanpa query versi, karena begitulah
-  // `import "./config.js"` bekerja. Cache panjang di js/ berarti deploy
-  // berikutnya tidak pernah sampai ke browser operator.
-  const jsBlock = nginx.slice(nginx.indexOf("location ~* \\.(js|css)$"));
-  assert.match(jsBlock, /Cache-Control "no-cache"/);
-  assert.doesNotMatch(nginx.slice(0, nginx.indexOf("location /assets/")), /expires\s+\d+[dy]/);
+  // `import "./config.js"` bekerja. Cache panjang berarti deploy berikutnya
+  // mengirim app.js baru di atas sebelas modul lama.
+  assert.match(staticServer, /function cacheControl\(pathname\)/);
+  assert.match(staticServer, /return "no-cache"/);
+  assert.match(staticServer, /pathname\.startsWith\("\/assets\/"\)/, "hanya assets/ yang di-cache lama");
 });
 
-test("assets boleh di-cache lama tetapi hanya lewat satu header", () => {
-  const assetBlock = nginx.slice(nginx.indexOf("location /assets/"));
-  assert.match(assetBlock, /max-age=2592000/);
-  // `expires` dan `add_header Cache-Control` sama-sama memancarkan header itu;
-  // memakai keduanya mengirimkannya dua kali.
-  assert.doesNotMatch(assetBlock.slice(0, assetBlock.indexOf("location /")), /expires /);
+test("penyajian statis tidak dapat keluar dari folder publik", () => {
+  assert.match(staticServer, /normalize\(decodeURIComponent\(pathname\)\)/);
+  assert.match(staticServer, /if \(!file\.startsWith\(ROOT\)\)/);
+  assert.match(staticServer, /403/);
 });
 
-/* -- Proksi API ------------------------------------------------------------ */
-
-test("resolver diturunkan saat runtime, tidak dipatok ke DNS internal Docker", () => {
-  // 127.0.0.11 hanya ada pada jaringan buatan pengguna. Di jaringan bridge
-  // bawaan ia menolak koneksi, dan setiap permintaan API menjadi 502 walaupun
-  // kontainernya jelas dapat menghubungi internet.
-  assert.doesNotMatch(nginx, /resolver\s+127\.0\.0\.11/, "jangan patok DNS internal Docker");
-  assert.match(resolver, /awk '\/\^nameserver\/ \{ print \$2 \}' \/etc\/resolv\.conf/);
-  assert.match(resolver, /ipv6=off/);
-  assert.match(dockerfile, /docker-entrypoint\.d\/10-resolver\.sh/);
+test("tipe konten modul ES benar", () => {
+  // Browser menolak menjalankan modul yang dikirim dengan tipe salah.
+  assert.match(staticServer, /"\.js": "text\/javascript; charset=utf-8"/);
 });
 
-test("proksi meneruskan header yang menentukan autentikasi dan cache", () => {
-  const proxy = nginx.slice(nginx.indexOf("location = /api/inbound"), nginx.indexOf("---- Berkas statis"));
-  assert.match(proxy, /proxy_set_header Authorization \$http_authorization/, "sesi HMAC harus lolos");
-  // Tanpa If-None-Match, server tidak pernah dapat menjawab 304 dan setiap
-  // polling mengunduh payload penuh.
-  assert.match(proxy, /proxy_set_header If-None-Match \$http_if_none_match/);
-  // Diteruskan ke layanan `api` lewat jaringan compose, bukan ke internet.
-  assert.match(proxy, /proxy_pass \$api_upstream/);
-  assert.match(proxy, /X-Forwarded-For/);
+/* -- Port & health --------------------------------------------------------- */
+
+test("port dapat diatur dan EXPOSE menyebutkannya", () => {
+  // Coolify membaca EXPOSE untuk menentukan port yang dirutekan proxy-nya.
+  assert.match(dockerfile, /ENV PORT=3000/);
+  assert.match(dockerfile, /EXPOSE 3000/);
+  assert.match(server, /Number\(process\.env\.PORT\)/);
 });
 
-test("alamat API disisipkan saat runtime, bukan dipatok di image", () => {
-  // Variabel di proxy_pass memaksa nginx menyelesaikan DNS per permintaan;
-  // tanpa itu, kontainer `api` yang di-deploy ulang dengan IP baru membuat web
-  // gagal permanen sampai ikut di-restart.
-  assert.match(nginx, /\$\{API_UPSTREAM\}/);
-  assert.match(dockerfile, /ENV API_UPSTREAM=/);
-});
-
-test("health check tidak bergantung pada Supabase", () => {
-  // Backend yang bermasalah tidak boleh membuat Coolify mengira kontainernya
+test("health check tidak bergantung pada database", () => {
+  // Database yang bermasalah tidak boleh membuat platform mengira kontainernya
   // mati lalu menggulung deployment yang sebenarnya sehat.
-  const health = nginx.slice(nginx.indexOf("location = /healthz"), nginx.indexOf("---- Proksi API"));
-  assert.match(health, /return 200/);
-  assert.doesNotMatch(health, /proxy_pass/);
+  const health = server.slice(
+    server.indexOf('if (path === "/healthz")'),
+    server.indexOf('if (path !== "/api/inbound")'),
+  );
+  assert.match(health, /send\(response, 200, \{ ok: true \}\)/);
+  assert.doesNotMatch(health, /rpc\(/, "healthz tidak boleh menyentuh Postgres");
   assert.match(dockerfile, /HEALTHCHECK/);
-  // Health check mengikuti port yang sama dengan yang didengarkan nginx.
-  assert.match(dockerfile, /localhost:\$\{NGINX_PORT\}\/healthz/);
+  assert.match(dockerfile, /healthz/);
 });
 
-test("port dapat diatur lewat lingkungan", () => {
-  // Platform menyimpan setelan port per aplikasi, dan setelan itu dibuat
-  // sebelum Dockerfile ini ada — sehingga proxy dapat menembak port yang tidak
-  // didengarkan siapa pun, menghasilkan Bad Gateway walau kontainernya sehat.
-  assert.match(nginx, /listen \$\{NGINX_PORT\}/);
-  assert.match(nginx, /listen \[::\]:\$\{NGINX_PORT\}/);
-  assert.match(dockerfile, /ENV NGINX_PORT=80/);
+/* -- Compose --------------------------------------------------------------- */
+
+test("compose tidak menerbitkan port ke host di produksi", () => {
+  // Proxy Coolify sudah memegang port 80/443 host dan menjangkau layanan lewat
+  // jaringan internal; menerbitkan port justru berebut dengannya.
+  assert.match(compose, /expose:/);
+  assert.doesNotMatch(compose, /^\s+ports:/m, "pemetaan port hanya ada di override lokal");
+  assert.match(read("docker-compose.local.yml"), /ports:/);
 });
 
-/* -- Frontend ------------------------------------------------------------- */
+test("compose menolak start tanpa rahasia yang wajib", () => {
+  // Lebih baik gagal terang-terangan saat deploy daripada menyalakan aplikasi
+  // yang setiap login-nya pasti ditolak.
+  ["POSTGRES_PASSWORD", "INBOUND_AUTH_USERS", "INBOUND_AUTH_SECRET"].forEach((name) => {
+    assert.match(compose, new RegExp(`\\$\\{${name}:\\?`), `${name} harus wajib`);
+  });
+});
 
-test("frontend memakai proksi same-origin sehingga CORS berhenti jadi masalah", async () => {
+test("aplikasi menunggu database siap sebelum start", () => {
+  // Penerapan skema tidak boleh berlomba dengan Postgres yang belum menerima
+  // koneksi.
+  assert.match(compose, /condition: service_healthy/);
+  assert.match(compose, /pg_isready/);
+});
+
+test("data operasional ada di volume bernama", () => {
+  assert.match(compose, /inbound-db:\/var\/lib\/postgresql\/data/);
+  assert.match(compose, /^volumes:/m);
+});
+
+/* -- Frontend -------------------------------------------------------------- */
+
+test("frontend memanggil API di origin yang sama", async () => {
   const deployment = await importModule("js/deployment.js");
   assert.equal(deployment.API_PROXY_PATH, "/api/inbound");
-
-  // Jalur di frontend harus sama persis dengan blok location nginx.
-  assert.ok(
-    nginx.includes(`location = ${deployment.API_PROXY_PATH}`),
-    "jalur proksi frontend dan nginx harus cocok",
-  );
-
-  // Tidak ada URL backend di kode browser sama sekali.
-  const config = read("js/config.js");
-  assert.match(config, /export const BACKEND_URL = API_PROXY_PATH/);
-  assert.doesNotMatch(read("js/deployment.js"), /https:\/\/[a-z0-9]+\.supabase\.co/);
-});
-
-test("header keamanan dasar terpasang", () => {
-  ["X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy"].forEach((header) => {
-    assert.match(nginx, new RegExp(header), `${header} harus diset`);
-  });
-});
-
-test("mendengarkan port bawaan platform yang lazim", () => {
-  // Setelan port Coolify dibuat sebelum Dockerfile ini ada, sehingga proxy
-  // dapat menembak port yang tidak didengarkan siapa pun — Bad Gateway walau
-  // kontainernya sehat. Mendengarkan ketiganya menutup celah itu tanpa menuntut
-  // satu setelan UI diubah dengan benar.
-  // Pencocokan string biasa, bukan regex: `[::]` adalah kelas karakter di
-  // regex dan diam-diam mencocokkan hal yang sama sekali berbeda.
-  [3000, 8080].forEach((port) => {
-    assert.ok(nginx.includes(`listen ${port};`), `port ${port} harus didengarkan`);
-    assert.ok(nginx.includes(`listen [::]:${port};`), `port ${port} juga untuk IPv6`);
-  });
-  assert.match(dockerfile, /EXPOSE 80 3000 8080/);
-});
-
-test("backend usang dibedakan dari sesi kedaluwarsa", () => {
-  // Edge Function menjawab 401 untuk keduanya. Tanpa pembedaan ini, operator
-  // terlempar kembali ke layar login satu detik setelah berhasil masuk.
-  const api = read("js/api.js");
-  assert.match(api, /const FRESH_SESSION_MS = 60_000/);
-  assert.match(api, /if \(sessionAgeMs\(\) < FRESH_SESSION_MS\)/);
-  assert.match(api, /Backend yang ter-deploy lebih lama daripada aplikasi ini/);
-  // Sesi TIDAK dihapus pada kasus backend usang.
-  const guard = api.slice(api.indexOf("function handleUnauthorized"), api.indexOf("async function readBody"));
-  assert.ok(guard.indexOf("throw new ApiError") < guard.indexOf("clearSession()"), "lempar sebelum menghapus sesi");
-});
-
-test("kegagalan memuat terlihat di papan, bukan hanya tersimpan di state", () => {
-  const board = read("js/pages/board.js");
-  assert.match(board, /function errorBanner\(\)/);
-  assert.match(board, /store\.state\.error/);
-  assert.match(board, /role="alert"/);
-  assert.match(board, /\$\{errorBanner\(\)\}/, "spanduk harus benar-benar dirender");
-  assert.match(read("style.css"), /\.banner \{/);
+  assert.match(read("js/config.js"), /export const BACKEND_URL = API_PROXY_PATH/);
+  // Proses yang sama melayani keduanya, jadi tidak ada proxy yang bisa putus.
+  assert.match(server, /path !== "\/api\/inbound"/);
 });

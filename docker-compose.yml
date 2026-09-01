@@ -1,18 +1,19 @@
 # =============================================================================
 # ANTRIAN INBOUND FROZEN — STACK PRODUKSI
 #
-# Tiga layanan di satu host Coolify:
+# Dua layanan:
 #
-#   db   Postgres     — data operasional
-#   api  Node         — seluruh permukaan API dan penjadwal sync
-#   web  nginx        — berkas statis + proksi /api/inbound ke `api`
+#   db   Postgres  — data operasional
+#   app  Node      — berkas statis, API, dan penjadwal sync dalam satu proses
 #
-# Semuanya perangkat lunak sumber terbuka tanpa tier berbayar. Postgres berada
-# di host yang sama dengan API, jadi setiap kueri adalah panggilan lokal, bukan
-# perjalanan pulang-pergi ke penyedia terkelola — dan tidak ada proyek yang
-# ditangguhkan setelah tujuh hari sepi.
+# Semuanya sumber terbuka tanpa tier berbayar, berjalan di server Anda sendiri.
+# Postgres berada di host yang sama dengan aplikasi, jadi setiap kueri adalah
+# panggilan lokal — dan tidak ada proyek yang ditangguhkan setelah tujuh hari
+# sepi.
 #
-# Di Coolify: pilih build pack "Docker Compose" dan arahkan ke berkas ini.
+# Di Coolify: build pack "Docker Compose", berkas ini.
+# Alternatifnya, build pack "Dockerfile" juga cukup bila Postgres disediakan
+# terpisah sebagai resource Coolify; aplikasi hanya perlu DATABASE_URL.
 # =============================================================================
 
 services:
@@ -22,65 +23,47 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-inbound}
       POSTGRES_USER: ${POSTGRES_USER:-inbound}
-      # Wajib diisi di Coolify. Tanpa nilai, Postgres menolak start — lebih
-      # baik daripada diam-diam menerima sandi kosong.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD wajib diisi}
       TZ: Asia/Jakarta
     volumes:
       - inbound-db:/var/lib/postgresql/data
     healthcheck:
-      # `api` menunggu health check ini sebelum start, sehingga penerapan skema
-      # tidak pernah berlomba dengan Postgres yang belum siap menerima koneksi.
+      # `app` menunggu ini sebelum start, sehingga penerapan skema tidak pernah
+      # berlomba dengan Postgres yang belum siap menerima koneksi.
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-inbound} -d ${POSTGRES_DB:-inbound}"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 20s
 
-  api:
+  app:
     build:
       context: .
-      dockerfile: api/Dockerfile
+      dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-inbound}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-inbound}
-      PORT: 8080
+      PORT: 3000
       TZ: Asia/Jakarta
 
-      # Akun aplikasi dan kunci penanda tangan sesi. Keduanya wajib.
+      # Akun aplikasi dan kunci penanda tangan sesi. Keduanya wajib; tanpa
+      # nilai, compose menolak start alih-alih menyalakan aplikasi yang setiap
+      # login-nya pasti gagal.
       INBOUND_AUTH_USERS: ${INBOUND_AUTH_USERS:?INBOUND_AUTH_USERS wajib diisi}
       INBOUND_AUTH_SECRET: ${INBOUND_AUTH_SECRET:?INBOUND_AUTH_SECRET wajib diisi}
 
       # Sumber master PO. Bila cookie kosong, sync mati dan aplikasi tetap
-      # berjalan — pendaftaran hanya perlu memakai opsi PO manual.
+      # berjalan penuh — pendaftaran cukup memakai opsi PO manual.
       SUPERSET_BASE_URL: ${SUPERSET_BASE_URL:-https://dash.astronauts.id}
       SUPERSET_SESSION_COOKIE: ${SUPERSET_SESSION_COOKIE:-}
       SUPERSET_CHART_ID: ${SUPERSET_CHART_ID:-20662}
-      SUPERSET_SYNC_INTERVAL_MS: ${SUPERSET_SYNC_INTERVAL_MS:-300000}
-
-  web:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    depends_on:
-      - api
-    environment:
-      # nginx memproksikan /api/inbound ke layanan `api` lewat jaringan compose.
-      API_UPSTREAM: ${API_UPSTREAM:-http://api:8080}
-      TZ: Asia/Jakarta
-    # `expose`, BUKAN `ports`.
-    #
-    # Coolify menjalankan proxy-nya sendiri di port 80/443 host dan menjangkau
-    # layanan ini lewat jaringan internal. Menerbitkan port 80 ke host akan
-    # berebut dengan proxy itu, dan hasilnya Bad Gateway walau kontainernya
-    # sehat. Untuk pengembangan lokal, pakai docker-compose.local.yml yang
-    # menambahkan pemetaan port.
+    # `expose`, bukan `ports`: proxy Coolify menjangkau layanan lewat jaringan
+    # internal, dan menerbitkan port ke host justru berebut dengannya.
     expose:
-      - "80"
+      - "3000"
 
 volumes:
   inbound-db:

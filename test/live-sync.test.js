@@ -157,7 +157,9 @@ test("pengembangan dan produksi memakai jalur API yang sama", async () => {
   const { API_PROXY_PATH } = await importModule("js/deployment.js");
   assert.match(API_PROXY_PATH, /^\//, "jalur proksi harus relatif terhadap origin");
   assert.match(read("js/config.js"), /export const BACKEND_URL = API_PROXY_PATH/);
-  assert.ok(read("deploy/nginx.conf.template").includes(`location = ${API_PROXY_PATH}`));
+  // Proses Node yang sama melayani statis dan API, jadi jalur ini ditangani
+  // di satu tempat — tidak ada proxy terpisah yang bisa menyimpang darinya.
+  assert.ok(read("api/server.mjs").includes(`path !== "${API_PROXY_PATH}"`));
   assert.ok(read("scripts/dev-server.mjs").includes(`requestUrl.pathname === "${API_PROXY_PATH}"`));
 
   // URL relatif butuh basis, jika tidak `new URL()` melempar.

@@ -21,8 +21,14 @@ import { dirname, join } from "node:path";
 
 import pg from "pg";
 
+import { createStaticHandler } from "./static.mjs";
+
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.PORT) || 8080;
+
+// Berkas statis disajikan oleh proses yang sama. Bila halaman termuat, API-nya
+// pasti ikut hidup — tidak ada lagi celah antara proxy dan backend.
+const serveStatic = createStaticHandler(ROOT);
 
 /* --------------------------------------------------------------------------
  * Database
@@ -267,8 +273,9 @@ async function handle(request, response) {
     return send(response, 200, { ok: true });
   }
 
-  if (path !== "/api/inbound" && path !== "/") {
-    return send(response, 404, { ok: false, message: "Not found" });
+  // Apa pun di luar jalur API adalah permintaan berkas.
+  if (path !== "/api/inbound") {
+    return serveStatic(request, response, path);
   }
 
   const body = await readBody(request);

@@ -18,7 +18,6 @@ android/
 resources/
 
 # Backend dan perkakas — tidak pernah dijalankan di dalam image
-supabase/
 scripts/
 test/
 apps-script/
