@@ -144,8 +144,40 @@ test("panduan deployment menyebut langkah CORS yang mudah terlewat", () => {
   const guide = read("DEPLOYMENT.md");
   assert.match(guide, /APP_ORIGINS/);
   assert.match(guide, /js\/deployment\.js/);
-  assert.match(guide, /supabase functions deploy inbound-api --no-verify-jwt/);
+  assert.match(guide, /supabase functions deploy inbound-api/);
   assert.match(guide, /capacitor\.config\.json/, "origin Android harus ikut disebut");
+});
+
+test("panduan tidak menyuruh menambah flag yang sudah dideklarasikan config.toml", () => {
+  // `verify_jwt = false` sudah ada di supabase/config.toml untuk ketiga fungsi,
+  // sehingga `--no-verify-jwt` mubazir dan sudah usang di CLI versi baru.
+  const config = read("supabase/config.toml");
+  ["inbound-api", "sync-superset", "sync-gsheet"].forEach((fn) => {
+    assert.match(
+      config,
+      new RegExp(`\\[functions\\.${fn}\\][\\s\\S]{0,40}verify_jwt = false`),
+      `${fn} harus mendeklarasikan verify_jwt = false`,
+    );
+  });
+  assert.doesNotMatch(read("DEPLOYMENT.md"), /--no-verify-jwt/);
+});
+
+test("panduan menuntun urutan yang benar: migrasi sebelum fungsi", () => {
+  // Fungsi memanggil RPC yang baru ada setelah migrasi diterapkan; membalik
+  // urutannya membuat aplikasi mati di antara dua langkah.
+  const guide = read("DEPLOYMENT.md");
+  const migrations = guide.indexOf("npx supabase db push");
+  const functions = guide.indexOf("npx supabase functions deploy inbound-api");
+  assert.ok(migrations > 0 && functions > 0, "kedua perintah harus ada");
+  assert.ok(migrations < functions, "db push harus mendahului functions deploy");
+});
+
+test("panduan memuat langkah verifikasi yang dapat dijalankan", () => {
+  const guide = read("DEPLOYMENT.md");
+  assert.match(guide, /npm run doctor/);
+  assert.match(guide, /cron\.job/, "penjadwal harus diverifikasi");
+  assert.match(guide, /superset_po_master/, "sinkronisasi pertama harus diverifikasi");
+  assert.match(guide, /## Rollback/, "rollback wajib ada di runbook");
 });
 
 /* -- 4. Auto commit & push ------------------------------------------------- */
