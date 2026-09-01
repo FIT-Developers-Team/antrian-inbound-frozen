@@ -357,7 +357,21 @@ create or replace function public.inbound_superset_freshness()
 returns jsonb language sql security definer set search_path=public as $$
   with d as (select timezone('Asia/Jakarta',now())::date as today),
   scoped as (
-    select m.*, s.site_code, s.site_name from public.superset_po_master m
+    -- Kolom disebut satu per satu, TIDAK memakai `m.*`.
+    --
+    -- Migrasi ini sendiri menambahkan `site_code` ke `superset_po_master`
+    -- (bagian 2 di atas), sehingga `m.*` sudah membawa satu kolom bernama
+    -- `site_code`. Menambah `s.site_code` di sebelahnya membuat CTE ini punya
+    -- dua kolom dengan nama sama, dan setiap rujukan tak berkualifikasi di
+    -- bawah gagal dengan "column reference site_code is ambiguous".
+    --
+    -- `site_code` diambil dari `site_master` karena join-lah yang otoritatif;
+    -- kolom salinan di `superset_po_master` dapat kosong pada baris lama.
+    select
+      m.po_number, m.vendor_name, m.request_shipping_date,
+      m.fulfillment_arrived_start_at, m.po_status, m.synced_at,
+      s.site_code, s.site_name
+    from public.superset_po_master m
     join public.site_master s on s.location_id = m.location_id and s.active
   ),
   summary as (select count(*)::int total_master_po,max(synced_at) last_synced_at,

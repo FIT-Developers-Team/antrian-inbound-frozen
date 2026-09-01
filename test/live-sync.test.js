@@ -62,6 +62,34 @@ test("halaman Pengaturan menampilkan rantai sumber secara terpisah", () => {
   assert.match(settings, /SUPERSET_SESSION_COOKIE/);
 });
 
+test("tidak ada CTE yang menggabungkan alias.* dengan kolom join bernama sama", () => {
+  // `select m.*, s.site_code` menghasilkan dua kolom `site_code` ketika tabel m
+  // juga memilikinya, dan setiap rujukan tak berkualifikasi di bawahnya gagal
+  // dengan "column reference is ambiguous". Ini menghentikan `supabase db push`
+  // di tengah jalan, dan baru terlihat saat migrasi benar-benar dijalankan.
+  const { listFiles, read: readFile } = require("./helpers");
+  listFiles("supabase/migrations")
+    .filter((file) => file.endsWith(".sql"))
+    .forEach((file) => {
+      const sql = readFile(`supabase/migrations/${file}`);
+      const stars = [...sql.matchAll(/select\s+([a-z])\.\*\s*,\s*([a-z])\./gi)];
+      assert.deepEqual(
+        stars.map((match) => match[0]),
+        [],
+        `${file} menggabungkan alias.* dengan kolom join; sebutkan kolomnya satu per satu`,
+      );
+    });
+});
+
+test("superset_po_master memang punya site_code sendiri", () => {
+  // Alasan bug di atas nyata: migrasi multi-site menambahkan kolomnya, jadi
+  // `m.*` benar-benar bertabrakan dengan `s.site_code`.
+  assert.match(
+    migrations,
+    /alter table public\.superset_po_master add column if not exists site_code text/,
+  );
+});
+
 /* -- 2. Diagnostik akun ---------------------------------------------------- */
 
 test("salah konfigurasi akun dibedakan dari salah sandi", () => {
