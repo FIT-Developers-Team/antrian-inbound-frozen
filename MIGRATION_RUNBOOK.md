@@ -3,12 +3,19 @@
 ## Arsitektur target
 
 - Cloudflare Pages menyajikan `index.html`, `style.css`, `js/`, dan `assets/` saja.
+  Frontend adalah modul ES tanpa langkah build: `js/app.js` merakit kerangka dan
+  merutekan empat halaman (Papan Antrean, Daftar, Laporan, Pengaturan); `js/pages/`
+  memuat isinya; `js/api.js` adalah satu-satunya jalur ke server.
 - Supabase Postgres memiliki tiket operasional, baris PO, event, gate, master checker,
   dokumen BA, master produk, outbox Google Sheets, master gudang, dan metadata sync.
 - Supabase Edge Functions memiliki seluruh request terautentikasi dan integrasi sisi server.
 - Supabase Cron memanggil `sync-superset` tiap lima menit, worker Google Sheets tiap menit,
   dan pembersih outbox macet tiap lima belas menit.
 - Browser tidak pernah menerima service-role key, cookie Superset, sync secret, atau secret Apps Script.
+- Tidak ada Tailwind CDN dan tidak ada klien realtime. Keduanya dihapus pada
+  revamp v2: yang pertama menyusun ulang CSS di browser pada setiap muat halaman,
+  yang kedua selalu jatuh ke polling karena `realtime_config` mengembalikan
+  `enabled: false` tetapi tetap terunduh.
 
 ## Gudang (site)
 
@@ -95,7 +102,7 @@ location_id di luar daftar tersebut.
 - `GSHEET_SYNC_SECRET`
 - `GSHEET_SYNC_ENABLED`
 - `APP_ORIGINS`
-- `INBOUND_SNAPSHOT_DAYS_BACK` (opsional, default `7`)
+- `INBOUND_BOARD_DAYS_BACK` (opsional, default `2`)
 
 Supabase menyuntikkan `SUPABASE_URL` dan `SUPABASE_SERVICE_ROLE_KEY` ke Edge Function.
 Keduanya tidak boleh disalin ke kode browser.
@@ -108,7 +115,7 @@ origin di luar daftar tidak pernah dipantulkan balik.
 ### Satu sumber kebenaran SLA
 
 Target SLA sekarang dihitung `public.inbound_sla_target_hours(fleet, sku)` di
-database dan dibawa view `inbound_operational_rows` sebagai `sla_target_hours`,
+database dan dibawa view `inbound_board` sebagai `sla_target_hours`,
 `sla_deadline_at`, `sla_started_at`, dan `sla_stopped_at`.
 
 Sebelumnya aturan yang sama ditulis ulang di tiga tempat dengan hasil berbeda:
@@ -143,8 +150,8 @@ selalu 0 dan setiap tiket melaporkan "Belum mulai".
   boleh masa depan).
 - `POST inbound-api?action=set_arrival` mengoreksi kedatangan tiket yang sudah
   berjalan. Security, Checker, dan SPV boleh memakainya.
-- Waktu tunggu driver dihitung dari `waiting_started_at`
-  (`coalesce(arrived_at, created_at)`), bukan dari jam pengisian form.
+- Waktu tunggu driver dihitung dari `arrived_at` sampai `start_unloading_at`,
+  bukan dari jam pengisian form.
 
 ### Mulai bongkar
 
@@ -155,49 +162,81 @@ karena itu akan memundurkan deadline SLA secara diam-diam.
 
 ## Kontrak performa
 
-| Action        | Isi                                       | Frekuensi        | Cache   |
-| ------------- | ----------------------------------------- | ---------------- | ------- |
-| `state`       | Baris operasional + checker + katalog site | 10-60 detik adaptif | ETag |
-| `state_delta` | Hanya baris yang berubah + id yang hidup   | 10-60 detik adaptif | —    |
-| `po_master`   | Master PO Superset gudang aktif            | Saat buka Daftar | ETag    |
-| `export_rows` | Seluruh riwayat, berpaginasi               | Manual           | —       |
+| Action         | Isi                                                | Frekuensi        | Cache |
+| -------------- | -------------------------------------------------- | ---------------- | ----- |
+| `board`        | Satu baris per tiket + gate + katalog site          | 15 detik         | ETag  |
+| `po_master`    | Master PO Superset gudang aktif                     | Saat buka Daftar | ETag  |
+| `history`      | Riwayat pada rentang tanggal, dibatasi 5000 baris   | Manual           | —     |
 
-`state` **tidak lagi** membawa master PO. Sebelumnya setiap polling menarik seluruh
-`superset_po_master`, termasuk untuk layar yang tidak memerlukannya. Jendela hari
-operasional dibatasi `INBOUND_SNAPSHOT_DAYS_BACK` (default 7 hari, maksimum 90).
+### Satu baris per tiket
 
-Respons ber-fingerprint mengirim `ETag`; klien mengirim `If-None-Match` dan menerima
-`304` tanpa body ketika data tidak berubah. Agar ini bekerja lintas asal,
+`board` memakai view `public.inbound_board`, yang mengagregasi PO menjadi
+`po_numbers`, `po_count`, `total_qty`, dan `total_sku`.
+
+Sebelumnya `state` mengirim `inbound_operational_rows`, yaitu hasil join
+`tickets × ticket_pos`. Tiket dengan delapan PO menghasilkan delapan baris yang
+masing-masing membawa payload tiket lengkap, dan browser menyusunnya kembali
+menjadi satu kartu. Papan hanya butuh satu baris, jadi agregasinya dipindahkan
+ke Postgres.
+
+### ETag
+
+Respons ber-fingerprint mengirim `ETag`; klien mengirim `If-None-Match` dan
+menerima `304` tanpa body ketika data tidak berubah. Agar bekerja lintas asal,
 `access-control-expose-headers` wajib memuat `etag`.
 
-### Polling adaptif
+Setiap aksi tulis mengosongkan cache ETag di klien. Tanpa itu, polling
+berikutnya bisa dijawab `304` dan papan tampak tidak berubah sesaat setelah
+operator menekan tombol.
 
-Jeda polling mulai dari 10 detik dan melebar 10 detik per siklus sepi sampai
-maksimum 60 detik, setelah masa tenggang tiga siklus. Perubahan data, aksi
-operator, atau tab yang kembali terlihat langsung mengembalikannya ke 10 detik.
-ETag sudah membuat siklus sepi tidak mengirim body, tetapi setiap siklus tetap
-membangunkan radio perangkat — itulah yang dihemat di sini. Layar TV monitor
-yang menyala semalaman adalah kasus yang paling diuntungkan.
+### Riwayat dibatasi di server
+
+`history` menerima `from` dan `to`, dan menyaringnya di Postgres. Sebelumnya
+laporan memanggil `export_rows` yang menarik seluruh tabel berpaginasi lalu
+menyaringnya di browser.
 
 ### Satu ticker untuk elemen live
 
-Sebelumnya tiga interval satu detik berjalan bersamaan (`liveWaitingTimer`,
-`__wmLiveSlaTimer`, `driverTrackTimer`) dan tidak satu pun berhenti saat tab
-disembunyikan. Sekarang semuanya melewati satu ticker bersama yang berhenti
-otomatis pada `visibilitychange`.
+Seluruh hitung mundur melewati satu ticker satu detik di `js/sla.js` yang
+berhenti pada `visibilitychange`. Setiap elemen membawa tenggatnya sendiri di
+atribut `data-sla-*`, sehingga ticker hanya menulis ulang teks dan tidak pernah
+me-render ulang kartu atau tabel.
+
+Sebelumnya ada tiga interval satu detik yang berjalan bersamaan
+(`liveWaitingTimer`, `__wmLiveSlaTimer`, `driverTrackTimer`) dan tidak satu pun
+berhenti saat tab disembunyikan.
+
+### Yang dihapus pada revamp v2
+
+| Dihapus                                   | Alasan                                                        |
+| ----------------------------------------- | ------------------------------------------------------------- |
+| `api/inbound.js`, `api/sync-superset.js`  | Backend Vercel duplikat; `.vercelignore` mengecualikan `api/` dan tidak ada `vercel.json`, jadi tidak pernah ter-deploy |
+| `js/api_v2.js` (6.439 baris)              | Digantikan `js/api.js` + `js/store.js`                        |
+| `js/realtime_client*.js`                  | Selalu jatuh ke polling; ~50 KB terunduh tanpa pernah dipakai |
+| Tailwind CDN                              | Compiler runtime, bukan untuk produksi                         |
+| Halaman BA Reject, COMERCIAL, Panggil/TV, Debug, Drop-Off | Di luar empat kebutuhan inti; aksi backend-nya ikut dihapus |
+| Sintesis suara, mode TV, QR driver tracking | Tidak dipakai alur pos masuk                                  |
+
+Tiga belas fungsi di `js/app.js` lama terdefinisi dua kali (`pageDaftar`,
+`pageChecker`, `checkerTicketCard`, `validateSecurityForm`, dan lainnya).
+Definisi terakhir yang menang, sementara ribuan baris sebelumnya tetap dikirim
+ke setiap browser. `test/architecture.test.js` sekarang menolak definisi ganda.
 
 ## Verifikasi cutover
 
 - `GET inbound-api?action=health` mengembalikan HTTP 200 dengan `backend=supabase`
   dan daftar `active_sites`.
-- Pengguna terkonfigurasi dapat login dan membaca `state`.
+- Pengguna terkonfigurasi dapat login dan membaca `board`.
 - Tiket manual sekali pakai dapat dibuat, dibaca ulang, dan dihapus tanpa sisa baris.
 - Jumlah produk dan checker cocok dengan seed sumber.
 - Sync Superset mengembalikan jumlah baris dan checksum bukan nol, serta laporan
   `per_site` yang memuat setiap gudang aktif.
 - `inbound_superset_freshness()` melaporkan run sukses tidak lebih lama dari sepuluh menit.
 - Ketiga baris di `cron.job` aktif.
-- Setiap menu UI terbuka tanpa 404 atau error server.
+- Keempat menu UI terbuka tanpa 404 atau error server.
+- Hitung mundur SLA berdetak pada tiket yang sedang bongkar, dan berhenti pada
+  tiket yang sudah selesai.
+- `npm test` hijau (81 test) dan `npm run check:functions` berhasil.
 - Deployment Cloudflare Pages tidak memuat `api/`, `supabase/`, `.env*`, `.claude/`,
   atau file backend/runtime.
 - Polling kedua terhadap `state` tanpa perubahan data mengembalikan HTTP 304.
