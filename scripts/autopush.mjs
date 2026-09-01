@@ -24,8 +24,21 @@ function git(...parameters) {
   return execFileSync("git", parameters, { encoding: "utf8" }).trim();
 }
 
-function run(command, commandArgs) {
-  execFileSync(command, commandArgs, { stdio: "inherit", shell: process.platform === "win32" });
+/**
+ * Git dijalankan TANPA shell, sengaja.
+ *
+ * Di Windows, `shell: true` membuat argumen digabung menjadi satu baris
+ * perintah lalu dipecah ulang oleh shell — sehingga pesan commit berisi spasi
+ * berubah menjadi banyak pathspec dan commit gagal. git.exe dapat dijalankan
+ * langsung, jadi shell memang tidak diperlukan.
+ */
+function runGit(...parameters) {
+  execFileSync("git", parameters, { stdio: "inherit" });
+}
+
+/** npm di Windows adalah npm.cmd, yang justru mensyaratkan shell. */
+function runNpm(...parameters) {
+  execFileSync("npm", parameters, { stdio: "inherit", shell: process.platform === "win32" });
 }
 
 /* -- 1. Ada yang perlu di-push? -------------------------------------------- */
@@ -71,9 +84,9 @@ if (skipChecks) {
   console.log("  Melewati pemeriksaan atas permintaan (--skip-checks).");
 } else {
   console.log("  Memeriksa sintaks…");
-  run("npm", ["run", "check"]);
+  runNpm("run", "check");
   console.log("  Menjalankan test…");
-  run("npm", ["test"]);
+  runNpm("test");
 }
 
 /* -- 4. Pesan commit ------------------------------------------------------- */
@@ -101,21 +114,21 @@ const commitMessage =
 const current = git("rev-parse", "--abbrev-ref", "HEAD");
 if (current !== BRANCH) {
   console.log(`  Berpindah dari ${current} ke ${BRANCH}…`);
-  run("git", ["checkout", BRANCH]);
+  runGit("checkout", BRANCH);
 }
 
-run("git", ["add", "-A"]);
-run("git", ["commit", "-m", commitMessage]);
+runGit("add", "-A");
+runGit("commit", "-m", commitMessage);
 
 // Rebase dahulu agar commit orang lain tidak tertimpa oleh push ini.
 console.log("  Menarik perubahan remote…");
 try {
-  run("git", ["pull", "--rebase", "origin", BRANCH]);
+  runGit("pull", "--rebase", "origin", BRANCH);
 } catch {
   console.error("\n  Rebase gagal — selesaikan konflik, lalu jalankan ulang.\n");
   process.exit(1);
 }
 
-run("git", ["push", "origin", BRANCH]);
+runGit("push", "origin", BRANCH);
 
 console.log(`\n  Terdorong ke ${BRANCH}: ${commitMessage}\n`);

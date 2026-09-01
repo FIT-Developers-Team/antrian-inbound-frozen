@@ -161,9 +161,25 @@ test("push otomatis menolak berkas yang tampak memuat rahasia", () => {
 
 test("push otomatis menjalankan gerbang mutu sebelum mendorong", () => {
   const push = read("scripts/autopush.mjs");
-  assert.match(push, /run\("npm", \["run", "check"\]\)/);
-  assert.match(push, /run\("npm", \["test"\]\)/);
+  assert.match(push, /runNpm\("run", "check"\)/);
+  assert.match(push, /runNpm\("test"\)/);
   // Rebase dahulu supaya commit orang lain tidak tertimpa.
   assert.match(push, /"pull", "--rebase", "origin", BRANCH/);
   assert.match(push, /const BRANCH = "main"/);
+});
+
+test("git dipanggil tanpa shell agar pesan commit tidak terpecah", () => {
+  // Di Windows, `shell: true` membuat shell memecah ulang argumen, sehingga
+  // pesan commit berisi spasi berubah menjadi banyak pathspec dan commit gagal.
+  const push = read("scripts/autopush.mjs");
+  assert.match(
+    push,
+    /execFileSync\("git", parameters, \{ stdio: "inherit" \}\)/,
+    "git dijalankan langsung, tanpa opsi shell",
+  );
+  assert.match(
+    push,
+    /execFileSync\("npm", parameters, \{ stdio: "inherit", shell: process\.platform === "win32" \}\)/,
+    "npm.cmd justru memerlukan shell di Windows",
+  );
 });

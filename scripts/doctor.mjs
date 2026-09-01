@@ -132,11 +132,17 @@ try {
     }
   }
 
-  const origins = data?.allowed_origins || [];
-  if (!origins.length) {
-    console.log(warn("APP_ORIGINS kosong, sehingga CORS terbuka untuk semua origin."));
-  } else {
-    console.log(info(`Origin yang diizinkan: ${origins.join(", ")}`));
+  // Hanya dilaporkan bila auth_status benar-benar menjawab. Tanpa penjagaan
+  // ini, backend lama yang belum mengenal auth_status akan dilaporkan sebagai
+  // "APP_ORIGINS kosong" — padahal preflight di atas jelas memantulkan sebuah
+  // origin, dan nasihatnya jadi menyesatkan.
+  if (data?.allowed_origins) {
+    const origins = data.allowed_origins;
+    if (!origins.length) {
+      console.log(warn("APP_ORIGINS kosong, sehingga CORS terbuka untuk semua origin."));
+    } else {
+      console.log(info(`Origin yang diizinkan: ${origins.join(", ")}`));
+    }
   }
 } catch (error) {
   problems += 1;
