@@ -143,3 +143,38 @@ test("header keamanan dasar terpasang", () => {
     assert.match(nginx, new RegExp(header), `${header} harus diset`);
   });
 });
+
+test("mendengarkan port bawaan platform yang lazim", () => {
+  // Setelan port Coolify dibuat sebelum Dockerfile ini ada, sehingga proxy
+  // dapat menembak port yang tidak didengarkan siapa pun — Bad Gateway walau
+  // kontainernya sehat. Mendengarkan ketiganya menutup celah itu tanpa menuntut
+  // satu setelan UI diubah dengan benar.
+  // Pencocokan string biasa, bukan regex: `[::]` adalah kelas karakter di
+  // regex dan diam-diam mencocokkan hal yang sama sekali berbeda.
+  [3000, 8080].forEach((port) => {
+    assert.ok(nginx.includes(`listen ${port};`), `port ${port} harus didengarkan`);
+    assert.ok(nginx.includes(`listen [::]:${port};`), `port ${port} juga untuk IPv6`);
+  });
+  assert.match(dockerfile, /EXPOSE 80 3000 8080/);
+});
+
+test("backend usang dibedakan dari sesi kedaluwarsa", () => {
+  // Edge Function menjawab 401 untuk keduanya. Tanpa pembedaan ini, operator
+  // terlempar kembali ke layar login satu detik setelah berhasil masuk.
+  const api = read("js/api.js");
+  assert.match(api, /const FRESH_SESSION_MS = 60_000/);
+  assert.match(api, /if \(sessionAgeMs\(\) < FRESH_SESSION_MS\)/);
+  assert.match(api, /Backend yang ter-deploy lebih lama daripada aplikasi ini/);
+  // Sesi TIDAK dihapus pada kasus backend usang.
+  const guard = api.slice(api.indexOf("function handleUnauthorized"), api.indexOf("async function readBody"));
+  assert.ok(guard.indexOf("throw new ApiError") < guard.indexOf("clearSession()"), "lempar sebelum menghapus sesi");
+});
+
+test("kegagalan memuat terlihat di papan, bukan hanya tersimpan di state", () => {
+  const board = read("js/pages/board.js");
+  assert.match(board, /function errorBanner\(\)/);
+  assert.match(board, /store\.state\.error/);
+  assert.match(board, /role="alert"/);
+  assert.match(board, /\$\{errorBanner\(\)\}/, "spanduk harus benar-benar dirender");
+  assert.match(read("style.css"), /\.banner \{/);
+});

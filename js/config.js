@@ -39,6 +39,7 @@ export const BACKEND_URL =
 
 export const STORAGE = {
   session: "inbound_frozen_session_v2",
+  issuedAt: "inbound_frozen_issued_v2",
   user: "inbound_frozen_user_v2",
   site: "inbound_frozen_site_v2",
   theme: "inbound_frozen_theme_v2",

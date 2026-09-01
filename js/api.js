@@ -37,8 +37,20 @@ export function setSession(token, user) {
   try {
     if (token) globalThis.localStorage?.setItem(STORAGE.session, token);
     if (user) globalThis.localStorage?.setItem(STORAGE.user, JSON.stringify(user));
+    // Jam terbit dipakai untuk membedakan sesi kedaluwarsa dari backend usang;
+    // lihat handleUnauthorized().
+    globalThis.localStorage?.setItem(STORAGE.issuedAt, String(Date.now()));
   } catch {
     /* Penyimpanan yang ditolak tidak boleh menggagalkan login. */
+  }
+}
+
+function sessionAgeMs() {
+  try {
+    const issued = Number(globalThis.localStorage?.getItem(STORAGE.issuedAt));
+    return Number.isFinite(issued) && issued > 0 ? Date.now() - issued : Infinity;
+  } catch {
+    return Infinity;
   }
 }
 
@@ -46,6 +58,7 @@ export function clearSession() {
   try {
     globalThis.localStorage?.removeItem(STORAGE.session);
     globalThis.localStorage?.removeItem(STORAGE.user);
+    globalThis.localStorage?.removeItem(STORAGE.issuedAt);
   } catch {
     /* diabaikan */
   }
@@ -99,8 +112,28 @@ function authHeaders(extra = {}) {
 /**
  * Sesi yang ditolak server dibersihkan sekali di sini, sehingga setiap
  * pemanggil tidak perlu menangani 401 sendiri-sendiri.
+ *
+ * Kecualinya penting. Edge Function menjawab 401 untuk DUA hal yang berbeda:
+ * sesi yang tidak sah, dan aksi yang tidak dikenalinya. Bila backend yang
+ * ter-deploy lebih tua daripada frontend, ia tidak mengenal `board`, menjawab
+ * 401, dan operator terlempar kembali ke layar login satu detik setelah
+ * berhasil masuk — berulang tanpa penjelasan.
+ *
+ * Sesi yang baru saja terbit hampir mustahil kedaluwarsa (masa berlakunya 12
+ * jam), jadi 401 pada menit pertama dibaca sebagai backend usang, bukan sebagai
+ * sesi mati. Sesi tidak dihapus, dan pemanggil menerima pesan yang menyebutkan
+ * penyebab sebenarnya.
  */
+const FRESH_SESSION_MS = 60_000;
+
 function handleUnauthorized() {
+  if (sessionAgeMs() < FRESH_SESSION_MS) {
+    throw new ApiError(
+      "Backend yang ter-deploy lebih lama daripada aplikasi ini dan belum mengenal aksi yang diminta. " +
+        "Jalankan: supabase db push && supabase functions deploy inbound-api",
+      409,
+    );
+  }
   clearSession();
   globalThis.dispatchEvent?.(new CustomEvent("inbound:signed-out"));
 }

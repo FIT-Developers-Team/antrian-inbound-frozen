@@ -22,13 +22,27 @@
 # skrip itu: alamat DNS internal Docker tidak sama di setiap jenis jaringan.
 
 server {
-  # Port dapat diatur lewat lingkungan. Platform seperti Coolify menyimpan
-  # setelan port per aplikasi, dan setelan itu dibuat SEBELUM Dockerfile ini
-  # ada — sehingga nilainya bisa jadi bukan 80, dan proxy platform berakhir
-  # menembak port yang tidak ada sama sekali (Bad Gateway walau kontainernya
-  # sehat). Menyamakan lewat NGINX_PORT lebih mudah daripada menebak.
-  listen ${NGINX_PORT};
-  listen [::]:${NGINX_PORT};
+  # Mendengarkan beberapa port sekaligus, dan ini disengaja.
+  #
+  # Coolify menyimpan setelan port per aplikasi. Aplikasi ini dibuat di Coolify
+  # KETIKA repo belum punya Dockerfile, sehingga tidak ada `EXPOSE` yang dapat
+  # dibaca dan setelannya tertinggal pada nilai bawaan Coolify. Akibatnya proxy
+  # Caddy menembak port yang tidak didengarkan siapa pun, dan hasilnya Bad
+  # Gateway walaupun kontainernya sehat dan berkasnya siap disajikan.
+  #
+  # Alih-alih menuntut satu setelan UI diubah dengan benar, server ini
+  # mendengarkan port bawaan yang lazim dipakai platform. Tidak ada ruginya:
+  # port-port ini hanya ada di dalam namespace jaringan kontainer, tidak pernah
+  # bentrok, dan tidak menambah permukaan serangan karena hanya proxy platform
+  # yang dapat menjangkaunya.
+  #
+  # NGINX_PORT tetap ada untuk port khusus di luar daftar ini.
+  listen ${NGINX_PORT} default_server;
+  listen [::]:${NGINX_PORT} default_server;
+  listen 3000;
+  listen [::]:3000;
+  listen 8080;
+  listen [::]:8080;
   server_name _;
 
   root /usr/share/nginx/html;

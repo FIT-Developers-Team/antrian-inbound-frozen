@@ -200,6 +200,28 @@ function cardActions(row, status) {
   return `<span class="chip">${esc(row.expired_reason || "Tidak ada aksi")}</span>`;
 }
 
+/**
+ * Kegagalan memuat harus terlihat di tempat operator bekerja.
+ *
+ * Sebelumnya pesannya hanya disimpan di state dan tidak pernah dirender, jadi
+ * backend yang bermasalah tampak persis seperti hari yang sepi: papan kosong,
+ * tanpa satu pun petunjuk tentang apa yang salah atau apa yang harus dilakukan.
+ */
+function errorBanner() {
+  const message = store.state.error;
+  if (!message) return "";
+
+  // Perintah perbaikan ditampilkan sebagai kode agar dapat langsung disalin.
+  const command = message.match(/(supabase [^.]+)/)?.[1];
+  const prose = command ? message.replace(command, "").replace(/Jalankan:\s*$/, "").trim() : message;
+
+  return `<div class="banner" role="alert">
+    <strong>${icon("alert", 18)} Data tidak dapat dimuat</strong>
+    <p>${esc(prose)}</p>
+    ${command ? `<p><code>${esc(command)}</code></p>` : ""}
+  </div>`;
+}
+
 /* --------------------------------------------------------------------------
  * Render
  * ----------------------------------------------------------------------- */
@@ -235,6 +257,8 @@ export function render(root) {
         "Catat kedatangan, panggil driver ke gate, mulai bongkar, dan pantau hitung mundur SLA dalam satu layar.",
       actions: `<button type="button" class="btn" data-action="refresh">${icon("refresh", 16)} Muat ulang</button>`,
     })}
+
+    ${errorBanner()}
 
     ${summarize(rows)}
 

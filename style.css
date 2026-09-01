@@ -1161,6 +1161,46 @@ select.input {
   padding: 20px !important;
 }
 
+/* Spanduk galat pada papan.
+ *
+ * Kegagalan memuat dulu hanya mengisi `state.error` yang tidak pernah
+ * dirender, sehingga backend yang bermasalah tampak persis seperti hari yang
+ * sepi: papan kosong, tanpa satu pun petunjuk. */
+.banner {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--status-critical);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--status-critical) 8%, var(--surface));
+}
+
+.banner strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--status-critical);
+  font-size: 14px;
+}
+
+.banner p {
+  margin: 0;
+  max-width: 78ch;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.banner code {
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 /* --------------------------------------------------------------------------
  * 6. Dialog & toast
  * ----------------------------------------------------------------------- */

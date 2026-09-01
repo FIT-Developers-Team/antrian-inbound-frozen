@@ -36,7 +36,8 @@ ENV SUPABASE_PROJECT_REF=qiafoaoslnbmtsbnmqou
 # bila platform tersebut tidak membaca EXPOSE di bawah.
 ENV NGINX_PORT=80
 
-EXPOSE 80
+# Port bawaan lazim; platform yang membaca EXPOSE akan menemukan salah satunya.
+EXPOSE 80 3000 8080
 
 # Health check dijawab nginx sendiri di /healthz, tanpa menyentuh Supabase,
 # supaya backend yang sedang bermasalah tidak membuat Coolify mengira
