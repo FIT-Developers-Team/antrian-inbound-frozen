@@ -1,0 +1,25 @@
+# =============================================================================
+# Override pengembangan lokal.
+#
+# docker-compose.yml sengaja tidak menerbitkan port apa pun: di Coolify, proxy
+# platform yang menjangkau layanan lewat jaringan internal, dan menerbitkan
+# port 80 ke host justru berebut dengan proxy itu.
+#
+# Di mesin sendiri tidak ada proxy semacam itu, jadi pemetaan port ditambahkan
+# di sini.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#
+# `npm run stack:up` sudah memakai keduanya.
+# =============================================================================
+
+services:
+  web:
+    ports:
+      - "${WEB_PORT:-8090}:80"
+
+  # Postgres diterbitkan supaya psql dan perkakas lain dapat menyambung dari
+  # host saat menelusuri masalah. Tidak pernah aktif di produksi.
+  db:
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"

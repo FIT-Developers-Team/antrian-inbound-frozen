@@ -18,9 +18,9 @@
     "test": "node --test test/*.test.js",
     "android:sync": "npx cap sync android",
     "android:build:debug": "cd android && gradlew.bat assembleDebug",
-    "stack:up": "docker compose up -d --build",
-    "stack:down": "docker compose down",
-    "stack:logs": "docker compose logs -f api"
+    "stack:up": "docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build",
+    "stack:down": "docker compose -f docker-compose.yml -f docker-compose.local.yml down",
+    "stack:logs": "docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f api"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",

@@ -72,8 +72,15 @@ services:
       # nginx memproksikan /api/inbound ke layanan `api` lewat jaringan compose.
       API_UPSTREAM: ${API_UPSTREAM:-http://api:8080}
       TZ: Asia/Jakarta
-    ports:
-      - "${WEB_PORT:-80}:80"
+    # `expose`, BUKAN `ports`.
+    #
+    # Coolify menjalankan proxy-nya sendiri di port 80/443 host dan menjangkau
+    # layanan ini lewat jaringan internal. Menerbitkan port 80 ke host akan
+    # berebut dengan proxy itu, dan hasilnya Bad Gateway walau kontainernya
+    # sehat. Untuk pengembangan lokal, pakai docker-compose.local.yml yang
+    # menambahkan pemetaan port.
+    expose:
+      - "80"
 
 volumes:
   inbound-db:
