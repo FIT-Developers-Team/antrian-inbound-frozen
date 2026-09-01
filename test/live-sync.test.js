@@ -155,10 +155,19 @@ test("URL backend hanya didefinisikan di satu berkas", async () => {
   });
 });
 
-test("localhost memakai proksi same-origin, produksi memanggil Supabase langsung", () => {
+test("localhost selalu lewat proksi, produksi mengikuti USE_API_PROXY", async () => {
   const config = read("js/config.js");
+  const { USE_API_PROXY, API_PROXY_PATH, SUPABASE_FUNCTION_URL } = await importModule("js/deployment.js");
+
   assert.match(config, /function isLocalhost\(\)/);
-  assert.match(config, /BACKEND_URL = isLocalhost\(\) \? "\/api\/inbound" : SUPABASE_FUNCTION_URL/);
+  assert.match(config, /isLocalhost\(\) \|\| USE_API_PROXY \? API_PROXY_PATH : SUPABASE_FUNCTION_URL/);
+
+  // Kedua mode harus tetap sah: Coolify memproksikan, hosting statis murni
+  // seperti Cloudflare Pages tidak bisa dan memanggil Supabase langsung.
+  assert.equal(typeof USE_API_PROXY, "boolean");
+  assert.match(API_PROXY_PATH, /^\//, "jalur proksi harus relatif terhadap origin");
+  assert.match(SUPABASE_FUNCTION_URL, /^https:\/\//);
+
   // URL relatif butuh basis, jika tidak `new URL()` melempar.
   assert.match(read("js/api.js"), /new URL\(BACKEND_URL, globalThis\.location\?\.origin/);
 });

@@ -305,16 +305,53 @@ Paket statis hanya berisi `index.html`, `style.css`, `js/`, dan `assets/`.
 `.vercelignore` mengecualikan sisanya — termasuk `scripts/`, sehingga server
 pengembangan dan doctor tidak pernah ikut ter-deploy.
 
-**Cloudflare Pages:**
+### Coolify (cara yang dipakai sekarang)
 
-- Production branch: `main`
-- Build command: _(kosong)_
-- Build output directory: `/`
+Coolify membangun dari `Dockerfile` di akar repo. Image-nya hanya nginx berisi
+berkas statis — tanpa Node, tanpa `node_modules`.
 
-**Hosting statis lain:** unggah keempat item di atas apa adanya. Tidak ada
-langkah build, tidak ada bundler.
+| Pengaturan Coolify   | Nilai                     |
+| -------------------- | ------------------------- |
+| Build Pack           | **Dockerfile**            |
+| Branch               | `main`                    |
+| Dockerfile Location  | `/Dockerfile`             |
+| Port                 | `80`                      |
+| Health Check Path    | `/healthz`                |
 
-Setelah domain aktif, pastikan ia ada di `APP_ORIGINS` (Langkah 3c).
+Variabel lingkungan (opsional, hanya bila pindah proyek Supabase):
+
+```
+SUPABASE_PROJECT_REF=qiafoaoslnbmtsbnmqou
+```
+
+**`APP_ORIGINS` tidak diperlukan untuk mode ini.** nginx di dalam kontainer
+memproksikan `/api/inbound` ke Supabase, sehingga permintaan API berada di
+origin yang sama dengan aplikasinya dan tidak pernah menjadi lintas asal. Inilah
+alasan proksi itu ada: CORS adalah satu-satunya bagian deployment ini yang
+berulang kali gagal, dan gejalanya selalu menyesatkan — aplikasi memuat
+sempurna, lalu layar login menolak kredensial yang benar.
+
+Uji image-nya secara lokal sebelum mendorong ke Coolify:
+
+```bash
+docker build -t inbound-frozen .
+docker run --rm -p 8099:80 inbound-frozen
+curl http://localhost:8099/healthz
+curl "http://localhost:8099/api/inbound?action=health"
+```
+
+Perintah terakhir harus menjawab JSON dari Supabase. Bila ia menjawab **502**,
+proksi gagal menyelesaikan DNS — periksa keluaran `10-resolver` di log
+kontainer.
+
+### Hosting statis murni (Cloudflare Pages, GitHub Pages)
+
+Hosting yang tidak dapat memproksikan apa pun harus memanggil Supabase langsung:
+
+1. Setel `USE_API_PROXY = false` di `js/deployment.js`.
+2. `APP_ORIGINS` **wajib** memuat origin produksi secara persis.
+
+Cloudflare Pages: production branch `main`, build command kosong, output `/`.
 
 ---
 

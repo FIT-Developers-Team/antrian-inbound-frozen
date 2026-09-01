@@ -1,0 +1,53 @@
+# =============================================================================
+# Konteks build Docker.
+#
+# Tanpa berkas ini, `docker build` mengirim SELURUH folder proyek ke daemon —
+# termasuk node_modules, android/ beserta artefak Gradle-nya, dan .git. Itu
+# ratusan megabyte yang diunggah pada setiap deploy Coolify, hanya untuk
+# menghasilkan image berisi beberapa ratus kilobyte berkas statis.
+#
+# Berkas ini juga jaring pengaman: apa pun yang tidak tersalin ke konteks
+# mustahil ikut masuk ke image, termasuk secret.
+# =============================================================================
+
+# Dependensi dan artefak build
+node_modules/
+.tools/
+dist/
+android/
+resources/
+
+# Backend dan perkakas — tidak pernah dijalankan di dalam image
+supabase/
+scripts/
+test/
+apps-script/
+data/
+mobile-web/
+
+# Rahasia. `.env*` sudah ada di .gitignore, tetapi build lokal dapat memilikinya
+# di disk dan konteks build tidak menghormati .gitignore.
+.env
+.env.*
+.dev.vars
+*.pem
+*.p12
+
+# Riwayat dan metadata
+.git/
+.github/
+.gitignore
+.vercelignore
+.claude/
+.vscode/
+
+# Dokumentasi
+*.md
+docs/
+
+# Konfigurasi yang hanya relevan di mesin pengembang
+package.json
+package-lock.json
+capacitor.config.json
+Dockerfile
+.dockerignore

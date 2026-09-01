@@ -14,24 +14,28 @@
  * cocok sebelum revamp ini.
  * ========================================================================== */
 
-import { SUPABASE_FUNCTION_URL } from "./deployment.js";
+import { API_PROXY_PATH, SUPABASE_FUNCTION_URL, USE_API_PROXY } from "./deployment.js";
 
 export const BRAND_FULL = "Antrian Inbound Frozen";
 export const BRAND_SHORT = "Inbound Frozen";
 
 /**
- * Di localhost, permintaan menuju proksi milik `npm run dev` pada origin yang
- * sama. Edge Function hanya memantulkan `Access-Control-Allow-Origin` untuk
- * origin di `APP_ORIGINS`, sehingga memanggilnya langsung dari localhost selalu
- * ditolak browser sebelum permintaan terkirim. Produksi tetap memanggil
- * Supabase secara langsung.
+ * Localhost selalu lewat proksi `npm run dev`: Edge Function hanya memantulkan
+ * `Access-Control-Allow-Origin` untuk origin yang terdaftar di `APP_ORIGINS`,
+ * dan `localhost` tidak pernah ada di sana.
  */
 function isLocalhost() {
   const host = globalThis.location?.hostname || "";
   return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
 }
 
-export const BACKEND_URL = isLocalhost() ? "/api/inbound" : SUPABASE_FUNCTION_URL;
+/**
+ * Di produksi, `USE_API_PROXY` menentukan jalurnya — lihat js/deployment.js.
+ * Pada Coolify nginx memproksikan jalur ini, sehingga permintaan API tidak
+ * pernah menjadi lintas asal dan CORS berhenti menjadi sumber kegagalan.
+ */
+export const BACKEND_URL =
+  isLocalhost() || USE_API_PROXY ? API_PROXY_PATH : SUPABASE_FUNCTION_URL;
 
 export const STORAGE = {
   session: "inbound_frozen_session_v2",

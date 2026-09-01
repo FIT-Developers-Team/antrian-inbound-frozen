@@ -1,0 +1,126 @@
+# =============================================================================
+# ANTRIAN INBOUND FROZEN — NGINX
+#
+# Dua tugas:
+#   1. Menyajikan berkas statis.
+#   2. Memproksikan /api/inbound ke Supabase Edge Function.
+#
+# Tugas kedua yang penting. Memanggil Supabase langsung dari browser membuat
+# aplikasi bergantung pada `APP_ORIGINS` yang harus memuat domain produksi
+# secara persis; salah satu huruf saja, dan aplikasi memuat sempurna lalu
+# menolak setiap permintaan dengan galat CORS yang tampak seperti salah sandi.
+#
+# Karena Coolify menjalankan nginx ini di origin yang sama dengan aplikasinya,
+# permintaan API tidak pernah menjadi lintas asal, dan seluruh kelas kegagalan
+# itu hilang. Ini juga menyamakan perilaku produksi dengan `npm run dev`, yang
+# memakai proksi serupa.
+# =============================================================================
+
+# `resolver` TIDAK didefinisikan di sini. Ia dibangkitkan saat kontainer start
+# oleh deploy/10-resolver.sh, diturunkan dari /etc/resolv.conf milik kontainer,
+# dan ditulis ke /etc/nginx/conf.d/00-resolver.conf. Alasannya ada di komentar
+# skrip itu: alamat DNS internal Docker tidak sama di setiap jenis jaringan.
+
+server {
+  listen 80;
+  listen [::]:80;
+  server_name _;
+
+  root /usr/share/nginx/html;
+  index index.html;
+
+  # Coolify mengirim permintaan lewat proxy-nya sendiri; batas ini hanya
+  # menjaga agar body yang tidak masuk akal tidak sampai ke Supabase.
+  client_max_body_size 2m;
+
+  gzip on;
+  gzip_vary on;
+  gzip_min_length 512;
+  gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+  # ---- Header keamanan ------------------------------------------------------
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header X-Frame-Options "SAMEORIGIN" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+
+  # ---- Health check ---------------------------------------------------------
+  # Dijawab nginx sendiri. Sengaja tidak menyentuh Supabase: kontainer ini sehat
+  # selama ia dapat menyajikan berkas, terlepas dari keadaan backend.
+  location = /healthz {
+    access_log off;
+    add_header Content-Type text/plain;
+    return 200 "ok\n";
+  }
+
+  # ---- Proksi API -----------------------------------------------------------
+  location = /api/inbound {
+    # Variabel memaksa nginx menyelesaikan DNS saat runtime. Tanpa ini, nginx
+    # menyelesaikannya sekali saat start dan gagal permanen bila IP Supabase
+    # berubah — kegagalan yang hanya sembuh dengan restart kontainer.
+    set $supabase_host "${SUPABASE_PROJECT_REF}.supabase.co";
+    set $supabase_url "https://$supabase_host/functions/v1/inbound-api";
+
+    proxy_pass $supabase_url$is_args$args;
+
+    # SNI wajib menyala: tanpa itu Supabase menolak handshake TLS-nya.
+    proxy_ssl_server_name on;
+    proxy_ssl_name $supabase_host;
+    proxy_set_header Host $supabase_host;
+
+    # Authorization membawa sesi bertanda tangan HMAC; ia harus lolos apa adanya.
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header Content-Type $http_content_type;
+
+    # If-None-Match adalah inti cache ETag. Bila header ini tidak diteruskan,
+    # server tidak pernah dapat menjawab 304 dan setiap polling mengunduh
+    # payload penuh.
+    proxy_set_header If-None-Match $http_if_none_match;
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_connect_timeout 10s;
+    proxy_read_timeout 30s;
+
+    # Respons API tidak pernah boleh disimpan proxy perantara; kesegarannya
+    # sudah diatur ETag.
+    proxy_hide_header Cache-Control;
+    add_header Cache-Control "no-store" always;
+  }
+
+  # ---- Berkas statis --------------------------------------------------------
+  #
+  # CATATAN CACHE yang mudah salah:
+  #
+  # Hanya `index.html` yang menautkan `app.js?v=N` dan `style.css?v=N`. Modul
+  # yang diimpor app.js — config.js, api.js, sla.js, dan sisanya — diminta
+  # tanpa query versi sama sekali, karena begitulah `import "./config.js"`
+  # bekerja.
+  #
+  # Karena itu js/ TIDAK BOLEH di-cache lama. Bila di-cache satu tahun, deploy
+  # berikutnya tidak akan pernah sampai ke browser operator: index.html dan
+  # app.js ikut berubah karena versinya naik, tetapi sebelas modul lainnya
+  # tetap versi lama, dan aplikasinya rusak dengan cara yang sangat sulit
+  # dilacak. Revalidasi lewat ETag sudah murah untuk berkas sekecil ini.
+  location ~* \.(js|css)$ {
+    add_header Cache-Control "no-cache" always;
+    add_header X-Content-Type-Options "nosniff" always;
+  }
+
+  location = /index.html {
+    add_header Cache-Control "no-cache" always;
+  }
+
+  # Gambar dan font aman di-cache lama: isinya stabil, dan bila berubah namanya
+  # ikut berubah.
+  location /assets/ {
+    # Hanya add_header, tanpa `expires`. Keduanya sama-sama memancarkan
+    # Cache-Control, dan memakai dua-duanya mengirim header itu dua kali.
+    add_header Cache-Control "public, max-age=2592000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+  }
+
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}

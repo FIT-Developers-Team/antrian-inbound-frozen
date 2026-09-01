@@ -22,9 +22,30 @@ export const SUPABASE_FUNCTION_URL =
 /**
  * Origin produksi tempat aplikasi ini disajikan.
  *
- * Nilai ini TIDAK menegakkan apa pun dari sisi browser — ia hanya dipakai oleh
- * DEPLOYMENT.md dan `npm run doctor` untuk mengingatkan bahwa `APP_ORIGINS` di
- * Supabase Secrets harus memuat origin yang sama. CORS ditegakkan server, dan
- * origin yang tidak terdaftar akan ditolak browser sebelum permintaan terkirim.
+ * Nilai ini TIDAK menegakkan apa pun dari sisi browser — ia hanya dipakai
+ * dokumentasi dan `npm run doctor` sebagai pengingat. Isi dengan domain
+ * Coolify setelah domainnya ditetapkan.
  */
 export const PRODUCTION_ORIGIN = "https://antrian-inbound-frozen.pages.dev";
+
+/**
+ * Apakah permintaan API melewati proksi di origin yang sama?
+ *
+ * `true` (bawaan, dipakai Coolify) — browser memanggil `/api/inbound`, dan
+ * nginx di dalam kontainer meneruskannya ke Supabase. Permintaan tidak pernah
+ * menjadi lintas asal, sehingga `APP_ORIGINS` tidak lagi menentukan hidup-
+ * matinya aplikasi. Salah ketik satu huruf di sana dulu membuat aplikasi
+ * memuat sempurna lalu menolak setiap permintaan dengan galat yang tampak
+ * seperti salah sandi.
+ *
+ * `false` — browser memanggil Supabase langsung. Diperlukan pada hosting
+ * statis murni yang tidak dapat memproksikan apa pun, seperti Cloudflare
+ * Pages atau GitHub Pages. Dalam mode ini `APP_ORIGINS` WAJIB memuat origin
+ * produksi secara persis.
+ *
+ * Localhost selalu memakai proksi `npm run dev`, apa pun nilai ini.
+ */
+export const USE_API_PROXY = true;
+
+/** Jalur proksi. Harus cocok dengan blok `location` di deploy/nginx.conf.template. */
+export const API_PROXY_PATH = "/api/inbound";
