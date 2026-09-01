@@ -409,6 +409,37 @@ Bila pil menampilkan **Sumber 160 basi**, periksa berurutan:
 2. `select * from public.sync_runs where sync_name = 'superset' order by started_at desc limit 5;` — apa pesan galatnya?
 3. `SUPERSET_SESSION_COOKIE` kedaluwarsa — ini penyebab yang paling sering. Perbarui secret, lalu deploy ulang `sync-superset`.
 
+## Menguji migrasi sebelum menyentuh produksi
+
+Repo ini tidak punya CI, jadi `db push` ke produksi adalah tempat pertama
+kesalahan SQL terlihat — di tengah jalan, setelah sebagian migrasi terlanjur
+tercatat. Uji dulu secara lokal.
+
+**Docker Desktop harus berjalan, bukan sekadar terpasang.** Buka aplikasinya
+dan tunggu sampai statusnya hijau; `docker ps` yang berhasil menandakan mesinnya
+siap.
+
+```bash
+npx supabase start          # WAJIB lebih dulu; db reset menolak tanpa ini
+npx supabase db reset       # terapkan sembilan migrasi ke Postgres bersih
+npx supabase stop --no-backup
+```
+
+`supabase start` menarik seluruh stack (~beberapa GB pada kali pertama) dan
+kadang gagal di tengah bila koneksi terputus; ulangi saja.
+
+Bila hanya ingin memvalidasi SQL tanpa menunggu seluruh stack, cukup pakai
+kontainer database-nya:
+
+```bash
+for f in supabase/migrations/*.sql; do
+  docker exec -i supabase_db_<project-ref> psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 -q < "$f" && echo "OK $f" || echo "FAIL $f"
+done
+```
+
+Kesembilan berkas harus `OK`. Migrasi bersifat idempoten, jadi dapat diulang.
+
 ## Pengembangan lokal
 
 ```bash
