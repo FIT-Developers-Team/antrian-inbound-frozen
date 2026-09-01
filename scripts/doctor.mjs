@@ -89,7 +89,9 @@ try {
     problems += 1;
     console.log(fail("Edge Function yang ter-deploy sudah usang — If-None-Match tidak diizinkan."));
     console.log(info("Setiap polling mengunduh body penuh, bukan 304."));
-    console.log(info("Perbaikan: supabase functions deploy inbound-api --no-verify-jwt"));
+    // `verify_jwt = false` sudah dideklarasikan di supabase/config.toml, jadi
+    // tidak ada flag tambahan yang perlu diketik.
+    console.log(info("Perbaikan: npx supabase db push && npx supabase functions deploy inbound-api"));
   }
   console.log(info(`CORS memantulkan origin: ${allowOrigin}`));
 } catch (error) {

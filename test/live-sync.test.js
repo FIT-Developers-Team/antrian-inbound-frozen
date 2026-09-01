@@ -159,7 +159,19 @@ test("panduan tidak menyuruh menambah flag yang sudah dideklarasikan config.toml
       `${fn} harus mendeklarasikan verify_jwt = false`,
     );
   });
-  assert.doesNotMatch(read("DEPLOYMENT.md"), /--no-verify-jwt/);
+  // Berlaku untuk SETIAP tempat yang menyarankan perintah deploy, bukan hanya
+  // dokumen. Doctor sempat menyarankan flag itu sementara runbook sudah tidak,
+  // dan tidak ada yang menangkap ketidakcocokannya.
+  ["DEPLOYMENT.md", "scripts/doctor.mjs", "MIGRATION_RUNBOOK.md"].forEach((file) => {
+    assert.doesNotMatch(read(file), /--no-verify-jwt/, `${file} tidak boleh menyarankan flag usang`);
+  });
+});
+
+test("doctor menyarankan migrasi sebelum deploy fungsi", () => {
+  // Saran perbaikan harus mengikuti urutan yang sama dengan runbook; fungsi
+  // baru memanggil RPC yang belum ada sebelum migrasi diterapkan.
+  const doctor = read("scripts/doctor.mjs");
+  assert.match(doctor, /npx supabase db push && npx supabase functions deploy inbound-api/);
 });
 
 test("panduan menuntun urutan yang benar: migrasi sebelum fungsi", () => {
