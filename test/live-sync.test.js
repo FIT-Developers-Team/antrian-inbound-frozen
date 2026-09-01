@@ -4,16 +4,16 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { read, allMigrations, importModule } = require("./helpers");
+const { read, schema, apiServer, importModule } = require("./helpers");
 
-const migrations = allMigrations();
-const edge = read("supabase/functions/inbound-api/index.ts");
+const migrations = schema();
+const edge = apiServer();
 const app = read("js/app.js");
 
 /* -- 1. Kesegaran sumber PGS 160 ------------------------------------------- */
 
 test("kesegaran sumber Superset ikut dalam setiap snapshot papan", () => {
-  assert.match(migrations, /create or replace function public\.inbound_source_freshness/);
+  assert.match(migrations, /create or replace function inbound_source_freshness/);
   // Ikut di snapshot supaya UI tidak perlu permintaan kedua tiap 15 detik.
   assert.match(migrations, /'source', freshness\.payload/);
   assert.match(read("js/store.js"), /state\.source = payload\?\.source \|\| null/);
@@ -49,10 +49,10 @@ test("ambang basi adalah tiga siklus cron yang terlewat", async () => {
 });
 
 test("sync Superset tetap menyaring ke gudang aktif saja", () => {
-  const sync = read("supabase/functions/sync-superset/index.ts");
+  const sync = read("api/sync-superset.mjs");
   assert.match(sync, /site_master/, "site_master adalah sumber kebenaran gudang");
   assert.match(sync, /withSiteFilter/, "filter lokasi disuntikkan ke query_context");
-  assert.match(migrations, /join public\.site_master s on s\.location_id = m\.location_id and s\.active/);
+  assert.match(migrations, /join site_master s on s\.location_id = m\.location_id and s\.active/);
 });
 
 test("halaman Pengaturan menampilkan rantai sumber secara terpisah", () => {
@@ -67,27 +67,18 @@ test("tidak ada CTE yang menggabungkan alias.* dengan kolom join bernama sama", 
   // juga memilikinya, dan setiap rujukan tak berkualifikasi di bawahnya gagal
   // dengan "column reference is ambiguous". Ini menghentikan `supabase db push`
   // di tengah jalan, dan baru terlihat saat migrasi benar-benar dijalankan.
-  const { listFiles, read: readFile } = require("./helpers");
-  listFiles("supabase/migrations")
-    .filter((file) => file.endsWith(".sql"))
-    .forEach((file) => {
-      const sql = readFile(`supabase/migrations/${file}`);
-      const stars = [...sql.matchAll(/select\s+([a-z])\.\*\s*,\s*([a-z])\./gi)];
-      assert.deepEqual(
-        stars.map((match) => match[0]),
-        [],
-        `${file} menggabungkan alias.* dengan kolom join; sebutkan kolomnya satu per satu`,
-      );
-    });
+  const stars = [...migrations.matchAll(/select\s+([a-z])\.\*\s*,\s*([a-z])\./gi)];
+  assert.deepEqual(
+    stars.map((match) => match[0]),
+    [],
+    "db/schema.sql menggabungkan alias.* dengan kolom join; sebutkan kolomnya satu per satu",
+  );
 });
 
 test("superset_po_master memang punya site_code sendiri", () => {
-  // Alasan bug di atas nyata: migrasi multi-site menambahkan kolomnya, jadi
-  // `m.*` benar-benar bertabrakan dengan `s.site_code`.
-  assert.match(
-    migrations,
-    /alter table public\.superset_po_master add column if not exists site_code text/,
-  );
+  // Alasan bug lama nyata: tabelnya punya site_code, jadi `m.*` bertabrakan
+  // dengan `s.site_code` dan membuat setiap rujukan di bawahnya ambigu.
+  assert.match(migrations, /create table if not exists superset_po_master[\s\S]*?site_code\s+text/);
 });
 
 /* -- 2. Diagnostik akun ---------------------------------------------------- */
@@ -96,13 +87,13 @@ test("salah konfigurasi akun dibedakan dari salah sandi", () => {
   // 401 dapat diperbaiki operator dengan mengetik ulang; 503 tidak bisa.
   assert.match(edge, /class AuthConfigError extends Error/);
   assert.match(edge, /if \(error instanceof AuthConfigError\)/);
-  assert.match(edge, /return jsonResponse\(request, 503/);
-  assert.match(edge, /INBOUND_AUTH_USERS belum diset di Supabase Secrets/);
+  assert.match(edge, /send\(response, 503/);
+  assert.match(edge, /INBOUND_AUTH_USERS belum diset/);
 });
 
 test("setiap kegagalan membaca daftar akun punya pesan sendiri", () => {
   [
-    /belum diset di Supabase Secrets/,
+    /belum diset/,
     /bukan JSON yang sah/,
     /harus berupa JSON array/,
     /array kosong/,
@@ -115,7 +106,7 @@ test("role yang tidak dikenal ditolak saat login, bukan saat memakai aksi", () =
   // Akun dengan role salah ketik dulu berhasil masuk lalu ditolak oleh setiap
   // aksi, yang di layar tampak seperti aplikasi rusak.
   assert.match(edge, /if \(!KNOWN_ROLES\.includes\(role\)\)/);
-  assert.match(edge, /role "\$\{clean\(user\.role\)\}" yang tidak dikenal/);
+  assert.match(edge, /yang tidak dikenal/);
 });
 
 test("diagnostik akun tidak membocorkan username maupun password", () => {
@@ -132,7 +123,6 @@ test("diagnostik akun tidak membocorkan username maupun password", () => {
 test("doctor memeriksa akun tanpa pernah mengirim password", () => {
   const doctor = read("scripts/doctor.mjs");
   assert.match(doctor, /auth_status/);
-  assert.match(doctor, /if-none-match/, "doctor mendeteksi Edge Function yang usang");
 
   // Yang dijaga adalah apa yang DIKIRIM, bukan kata yang muncul di keluaran:
   // doctor memang menyebut "password" saat melaporkan akun tanpa sandi.
@@ -143,30 +133,32 @@ test("doctor memeriksa akun tanpa pernah mengirim password", () => {
 
 /* -- 3. Konfigurasi deployment --------------------------------------------- */
 
-test("URL backend hanya didefinisikan di satu berkas", async () => {
+test("tidak ada URL backend yang tertanam di kode browser", async () => {
   const deployment = await importModule("js/deployment.js");
-  assert.match(deployment.SUPABASE_FUNCTION_URL, /^https:\/\/[a-z0-9]+\.supabase\.co\/functions\/v1\/inbound-api$/);
+  assert.equal(deployment.API_PROXY_PATH, "/api/inbound");
 
-  // Setiap pemakai membaca dari deployment.js, bukan menuliskan URL-nya sendiri.
-  ["js/config.js", "scripts/dev-server.mjs", "scripts/doctor.mjs"].forEach((file) => {
-    const source = read(file);
-    assert.match(source, /from "\.\.?\/(js\/)?deployment\.js"/, `${file} harus mengimpor konfigurasi deployment`);
-    assert.doesNotMatch(source, /https:\/\/[a-z0-9]+\.supabase\.co/, `${file} tidak boleh memuat URL Supabase sendiri`);
+  // Alamat backend hidup di docker-compose.yml (API_UPSTREAM), bukan di sini.
+  // PRODUCTION_ORIGIN dikecualikan: ia hanya dokumentasi untuk doctor, tidak
+  // pernah dipakai browser untuk memanggil apa pun.
+  // localhost dikecualikan: js/api.js memakainya sebagai basis `new URL()`
+  // untuk jalur relatif, bukan sebagai alamat backend.
+  ["js/config.js", "js/api.js"].forEach((file) => {
+    const remote = [...read(file).matchAll(/https?:\/\/[a-z0-9.-]+/gi)]
+      .map((match) => match[0])
+      .filter((url) => !url.includes("localhost"));
+    assert.deepEqual(remote, [], `${file} tidak boleh memuat URL backend`);
   });
+  assert.doesNotMatch(read("js/deployment.js"), /supabase/i, "tidak ada sisa Supabase");
 });
 
-test("localhost selalu lewat proksi, produksi mengikuti USE_API_PROXY", async () => {
-  const config = read("js/config.js");
-  const { USE_API_PROXY, API_PROXY_PATH, SUPABASE_FUNCTION_URL } = await importModule("js/deployment.js");
-
-  assert.match(config, /function isLocalhost\(\)/);
-  assert.match(config, /isLocalhost\(\) \|\| USE_API_PROXY \? API_PROXY_PATH : SUPABASE_FUNCTION_URL/);
-
-  // Kedua mode harus tetap sah: Coolify memproksikan, hosting statis murni
-  // seperti Cloudflare Pages tidak bisa dan memanggil Supabase langsung.
-  assert.equal(typeof USE_API_PROXY, "boolean");
+test("pengembangan dan produksi memakai jalur API yang sama", async () => {
+  // Keduanya memproksikan /api/inbound di origin yang sama, sehingga tidak ada
+  // perilaku CORS yang hanya muncul di salah satunya.
+  const { API_PROXY_PATH } = await importModule("js/deployment.js");
   assert.match(API_PROXY_PATH, /^\//, "jalur proksi harus relatif terhadap origin");
-  assert.match(SUPABASE_FUNCTION_URL, /^https:\/\//);
+  assert.match(read("js/config.js"), /export const BACKEND_URL = API_PROXY_PATH/);
+  assert.ok(read("deploy/nginx.conf.template").includes(`location = ${API_PROXY_PATH}`));
+  assert.ok(read("scripts/dev-server.mjs").includes(`requestUrl.pathname === "${API_PROXY_PATH}"`));
 
   // URL relatif butuh basis, jika tidak `new URL()` melempar.
   assert.match(read("js/api.js"), /new URL\(BACKEND_URL, globalThis\.location\?\.origin/);
@@ -177,56 +169,21 @@ test("server pengembangan tidak pernah ikut ter-deploy", () => {
   assert.ok(ignored.includes("scripts"), "scripts/ harus dikecualikan dari paket statis");
 });
 
-test("panduan deployment menyebut langkah CORS yang mudah terlewat", () => {
+test("panduan deployment menyebut setiap variabel yang wajib", () => {
   const guide = read("DEPLOYMENT.md");
-  assert.match(guide, /APP_ORIGINS/);
-  assert.match(guide, /js\/deployment\.js/);
-  assert.match(guide, /supabase functions deploy inbound-api/);
-  assert.match(guide, /capacitor\.config\.json/, "origin Android harus ikut disebut");
-});
-
-test("panduan tidak menyuruh menambah flag yang sudah dideklarasikan config.toml", () => {
-  // `verify_jwt = false` sudah ada di supabase/config.toml untuk ketiga fungsi,
-  // sehingga `--no-verify-jwt` mubazir dan sudah usang di CLI versi baru.
-  const config = read("supabase/config.toml");
-  ["inbound-api", "sync-superset", "sync-gsheet"].forEach((fn) => {
-    assert.match(
-      config,
-      new RegExp(`\\[functions\\.${fn}\\][\\s\\S]{0,40}verify_jwt = false`),
-      `${fn} harus mendeklarasikan verify_jwt = false`,
-    );
+  ["POSTGRES_PASSWORD", "INBOUND_AUTH_SECRET", "INBOUND_AUTH_USERS"].forEach((name) => {
+    assert.ok(guide.includes(name), `${name} harus disebut di panduan`);
   });
-  // Berlaku untuk SETIAP tempat yang menyarankan perintah deploy, bukan hanya
-  // dokumen. Doctor sempat menyarankan flag itu sementara runbook sudah tidak,
-  // dan tidak ada yang menangkap ketidakcocokannya.
-  ["DEPLOYMENT.md", "scripts/doctor.mjs", "MIGRATION_RUNBOOK.md"].forEach((file) => {
-    assert.doesNotMatch(read(file), /--no-verify-jwt/, `${file} tidak boleh menyarankan flag usang`);
-  });
-});
-
-test("doctor menyarankan migrasi sebelum deploy fungsi", () => {
-  // Saran perbaikan harus mengikuti urutan yang sama dengan runbook; fungsi
-  // baru memanggil RPC yang belum ada sebelum migrasi diterapkan.
-  const doctor = read("scripts/doctor.mjs");
-  assert.match(doctor, /npx supabase db push && npx supabase functions deploy inbound-api/);
-});
-
-test("panduan menuntun urutan yang benar: migrasi sebelum fungsi", () => {
-  // Fungsi memanggil RPC yang baru ada setelah migrasi diterapkan; membalik
-  // urutannya membuat aplikasi mati di antara dua langkah.
-  const guide = read("DEPLOYMENT.md");
-  const migrations = guide.indexOf("npx supabase db push");
-  const functions = guide.indexOf("npx supabase functions deploy inbound-api");
-  assert.ok(migrations > 0 && functions > 0, "kedua perintah harus ada");
-  assert.ok(migrations < functions, "db push harus mendahului functions deploy");
+  assert.match(guide, /Docker Compose/, "build pack Coolify harus disebut");
+  assert.match(guide, /\/healthz/, "health check path harus disebut");
 });
 
 test("panduan memuat langkah verifikasi yang dapat dijalankan", () => {
   const guide = read("DEPLOYMENT.md");
   assert.match(guide, /npm run doctor/);
-  assert.match(guide, /cron\.job/, "penjadwal harus diverifikasi");
-  assert.match(guide, /superset_po_master/, "sinkronisasi pertama harus diverifikasi");
+  assert.match(guide, /pg_dump/, "cadangan wajib disebut — data kini milik sendiri");
   assert.match(guide, /## Rollback/, "rollback wajib ada di runbook");
+  assert.doesNotMatch(guide, /supabase/i, "tidak ada sisa instruksi Supabase");
 });
 
 /* -- 4. Auto commit & push ------------------------------------------------- */

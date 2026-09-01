@@ -91,14 +91,17 @@ test("proksi meneruskan header yang menentukan autentikasi dan cache", () => {
   // Tanpa If-None-Match, server tidak pernah dapat menjawab 304 dan setiap
   // polling mengunduh payload penuh.
   assert.match(proxy, /proxy_set_header If-None-Match \$http_if_none_match/);
-  // SNI: tanpa ini Supabase menolak handshake TLS.
-  assert.match(proxy, /proxy_ssl_server_name on/);
-  assert.match(proxy, /proxy_ssl_name \$supabase_host/);
+  // Diteruskan ke layanan `api` lewat jaringan compose, bukan ke internet.
+  assert.match(proxy, /proxy_pass \$api_upstream/);
+  assert.match(proxy, /X-Forwarded-For/);
 });
 
-test("host Supabase disisipkan saat runtime, bukan dipatok di image", () => {
-  assert.match(nginx, /\$\{SUPABASE_PROJECT_REF\}\.supabase\.co/);
-  assert.match(dockerfile, /ENV SUPABASE_PROJECT_REF=/);
+test("alamat API disisipkan saat runtime, bukan dipatok di image", () => {
+  // Variabel di proxy_pass memaksa nginx menyelesaikan DNS per permintaan;
+  // tanpa itu, kontainer `api` yang di-deploy ulang dengan IP baru membuat web
+  // gagal permanen sampai ikut di-restart.
+  assert.match(nginx, /\$\{API_UPSTREAM\}/);
+  assert.match(dockerfile, /ENV API_UPSTREAM=/);
 });
 
 test("health check tidak bergantung pada Supabase", () => {
@@ -125,7 +128,6 @@ test("port dapat diatur lewat lingkungan", () => {
 
 test("frontend memakai proksi same-origin sehingga CORS berhenti jadi masalah", async () => {
   const deployment = await importModule("js/deployment.js");
-  assert.equal(deployment.USE_API_PROXY, true);
   assert.equal(deployment.API_PROXY_PATH, "/api/inbound");
 
   // Jalur di frontend harus sama persis dengan blok location nginx.
@@ -134,8 +136,10 @@ test("frontend memakai proksi same-origin sehingga CORS berhenti jadi masalah", 
     "jalur proksi frontend dan nginx harus cocok",
   );
 
+  // Tidak ada URL backend di kode browser sama sekali.
   const config = read("js/config.js");
-  assert.match(config, /isLocalhost\(\) \|\| USE_API_PROXY \? API_PROXY_PATH : SUPABASE_FUNCTION_URL/);
+  assert.match(config, /export const BACKEND_URL = API_PROXY_PATH/);
+  assert.doesNotMatch(read("js/deployment.js"), /https:\/\/[a-z0-9]+\.supabase\.co/);
 });
 
 test("header keamanan dasar terpasang", () => {

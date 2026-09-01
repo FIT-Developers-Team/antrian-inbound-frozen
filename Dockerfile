@@ -28,9 +28,8 @@ COPY index.html style.css ./
 COPY js/ ./js/
 COPY assets/ ./assets/
 
-# Project ref default; timpa lewat variabel lingkungan di Coolify bila pindah
-# proyek Supabase. Ini BUKAN rahasia — ia sudah tampak di URL publik.
-ENV SUPABASE_PROJECT_REF=qiafoaoslnbmtsbnmqou
+# Alamat layanan API di jaringan compose.
+ENV API_UPSTREAM=http://api:8080
 
 # Port yang didengarkan nginx. Samakan dengan setelan port aplikasi di platform
 # bila platform tersebut tidak membaca EXPOSE di bawah.

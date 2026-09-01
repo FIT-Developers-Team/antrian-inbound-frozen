@@ -8,15 +8,15 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { read, allMigrations, allFrontend, importModule } = require("./helpers");
+const { read, schema, allFrontend, importModule } = require("./helpers");
 
-const migrations = allMigrations();
+const migrations = schema();
 const frontend = allFrontend();
 
 test("aturan SLA hanya ada satu, di dalam database", () => {
   assert.match(
     migrations,
-    /create or replace function public\.inbound_sla_target_hours/,
+    /create or replace function inbound_sla_target_hours/,
     "Postgres harus memiliki fungsi target SLA",
   );
 

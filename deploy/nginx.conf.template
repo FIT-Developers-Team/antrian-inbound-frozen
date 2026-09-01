@@ -73,36 +73,34 @@ server {
   }
 
   # ---- Proksi API -----------------------------------------------------------
+  #
+  # Diteruskan ke layanan `api` di jaringan compose yang sama. Karena proksi ini
+  # berada di origin yang sama dengan aplikasinya, permintaan API tidak pernah
+  # menjadi lintas asal — dan CORS, yang berulang kali menjadi satu-satunya
+  # penyebab kegagalan deployment ini, berhenti menjadi faktor sama sekali.
   location = /api/inbound {
-    # Variabel memaksa nginx menyelesaikan DNS saat runtime. Tanpa ini, nginx
-    # menyelesaikannya sekali saat start dan gagal permanen bila IP Supabase
-    # berubah — kegagalan yang hanya sembuh dengan restart kontainer.
-    set $supabase_host "${SUPABASE_PROJECT_REF}.supabase.co";
-    set $supabase_url "https://$supabase_host/functions/v1/inbound-api";
+    # Variabel memaksa nginx menyelesaikan DNS saat permintaan datang. Tanpa
+    # ini, nginx menyelesaikannya sekali saat start dan gagal permanen bila
+    # kontainer `api` di-deploy ulang dengan IP baru — kegagalan yang hanya
+    # sembuh dengan me-restart web.
+    set $api_upstream "${API_UPSTREAM}";
+    proxy_pass $api_upstream/api/inbound$is_args$args;
 
-    proxy_pass $supabase_url$is_args$args;
-
-    # SNI wajib menyala: tanpa itu Supabase menolak handshake TLS-nya.
-    proxy_ssl_server_name on;
-    proxy_ssl_name $supabase_host;
-    proxy_set_header Host $supabase_host;
-
-    # Authorization membawa sesi bertanda tangan HMAC; ia harus lolos apa adanya.
+    proxy_set_header Host $host;
+    # Sesi HMAC ada di sini; ia harus lolos apa adanya.
     proxy_set_header Authorization $http_authorization;
     proxy_set_header Content-Type $http_content_type;
-
-    # If-None-Match adalah inti cache ETag. Bila header ini tidak diteruskan,
-    # server tidak pernah dapat menjawab 304 dan setiap polling mengunduh
-    # payload penuh.
+    # Tanpa If-None-Match, server tidak pernah dapat menjawab 304 dan setiap
+    # polling mengunduh payload penuh.
     proxy_set_header If-None-Match $http_if_none_match;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 
     proxy_http_version 1.1;
     proxy_set_header Connection "";
     proxy_connect_timeout 10s;
     proxy_read_timeout 30s;
 
-    # Respons API tidak pernah boleh disimpan proxy perantara; kesegarannya
-    # sudah diatur ETag.
     proxy_hide_header Cache-Control;
     add_header Cache-Control "no-store" always;
   }

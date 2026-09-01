@@ -7,13 +7,13 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { read, allMigrations, importModule } = require("./helpers");
+const { read, schema, apiServer, importModule } = require("./helpers");
 
 const board = read("js/pages/board.js");
 const register = read("js/pages/register.js");
 const api = read("js/api.js");
-const edge = read("supabase/functions/inbound-api/index.ts");
-const migrations = allMigrations();
+const edge = apiServer();
+const migrations = schema();
 
 /* -- 1. Input kedatangan --------------------------------------------------- */
 
@@ -36,7 +36,7 @@ test("jam kedatangan ikut terkirim saat tiket dibuat", () => {
 test("kedatangan dapat dikoreksi untuk tiket yang sudah ada", () => {
   assert.match(board, /data-action="arrival"/, "kartu antrean harus punya aksi koreksi kedatangan");
   assert.match(api, /export function setArrival/);
-  assert.match(migrations, /create or replace function public\.inbound_set_arrival/);
+  assert.match(migrations, /create or replace function inbound_set_arrival/);
 });
 
 test("server menolak kedatangan di masa depan sebagai jaring pengaman", () => {
@@ -105,7 +105,7 @@ test("kesalahan plat ditandai lebih dari sekadar warna", () => {
 test("mulai bongkar tersedia sebagai satu aksi, bukan memilih PO satu per satu", () => {
   assert.match(board, /data-action="start"/);
   assert.match(api, /export function startUnloading/);
-  assert.match(migrations, /create or replace function public\.inbound_start_unloading/);
+  assert.match(migrations, /create or replace function inbound_start_unloading/);
   assert.match(
     migrations,
     /where ticket_id = v_id and upper\(coalesce\(checker_status, 'PENDING'\)\) = 'PENDING'/,
@@ -151,17 +151,17 @@ test("Mulai Bongkar hanya menjadi aksi utama setelah driver dipanggil", () => {
 
 test("menyelesaikan bongkar menutup jam SLA dan seluruh PO sekaligus", () => {
   assert.match(board, /data-action="finish"/);
-  assert.match(migrations, /create or replace function public\.inbound_finish_unloading/);
+  assert.match(migrations, /create or replace function inbound_finish_unloading/);
   assert.match(migrations, /v_finished := coalesce\(v_row\.done_unloading_at, v_finished\)/);
   assert.match(migrations, /gr_status\s+= 'DONE GR'/);
 });
 
 test("setiap perubahan tiket dicatat sebagai event dan mengantre ke Google Sheet", () => {
   ["inbound_call_ticket", "inbound_finish_unloading", "inbound_cancel_ticket"].forEach((fn) => {
-    const start = migrations.indexOf(`create or replace function public.${fn}`);
+    const start = migrations.indexOf(`create or replace function ${fn}`);
     assert.ok(start > 0, `${fn} harus ada`);
     const body = migrations.slice(start, migrations.indexOf("$$;", start));
-    assert.match(body, /insert into public\.ticket_events/, `${fn} harus mencatat event`);
+    assert.match(body, /insert into ticket_events/, `${fn} harus mencatat event`);
     assert.match(body, /inbound_requeue_gsheet/, `${fn} harus mengantre sinkronisasi sheet`);
   });
 });

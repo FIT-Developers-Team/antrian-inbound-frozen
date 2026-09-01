@@ -19,13 +19,14 @@ function listFiles(dir) {
   return fs.readdirSync(path.join(root, dir));
 }
 
-/** Menggabungkan seluruh migrasi sesuai urutan nama berkas. */
-function allMigrations() {
-  return listFiles("supabase/migrations")
-    .filter((file) => file.endsWith(".sql"))
-    .sort()
-    .map((file) => read(`supabase/migrations/${file}`))
-    .join("\n");
+/** Skema Postgres. Satu berkas, diterapkan API pada setiap start. */
+function schema() {
+  return read("db/schema.sql");
+}
+
+/** Kode server API yang menggantikan Edge Function. */
+function apiServer() {
+  return read("api/server.mjs");
 }
 
 /** Seluruh modul frontend, untuk pemeriksaan yang berlaku menyeluruh. */
@@ -54,4 +55,4 @@ function importModule(file) {
   return import(url.href);
 }
 
-module.exports = { root, read, exists, listFiles, allMigrations, allFrontend, FRONTEND_MODULES, importModule };
+module.exports = { root, read, exists, listFiles, schema, apiServer, allFrontend, FRONTEND_MODULES, importModule };

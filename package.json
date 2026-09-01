@@ -14,12 +14,13 @@
     "dev": "node scripts/dev-server.mjs",
     "doctor": "node scripts/doctor.mjs",
     "push": "node scripts/autopush.mjs",
-    "check": "node --check js/app.js && node --check js/api.js && node --check js/config.js && node --check js/format.js && node --check js/sla.js && node --check js/store.js && node --check js/theme.js && node --check js/ui.js && node --check js/pages/board.js && node --check js/pages/register.js && node --check js/pages/report.js && node --check js/pages/settings.js && node --check js/deployment.js",
-    "check:functions": "npx esbuild supabase/functions/_shared/http.ts supabase/functions/inbound-api/index.ts supabase/functions/sync-superset/index.ts supabase/functions/sync-gsheet/index.ts --outdir=.tools/check --format=esm --target=es2022",
+    "check": "node --check js/app.js && node --check js/api.js && node --check js/config.js && node --check js/format.js && node --check js/sla.js && node --check js/store.js && node --check js/theme.js && node --check js/ui.js && node --check js/pages/board.js && node --check js/pages/register.js && node --check js/pages/report.js && node --check js/pages/settings.js && node --check js/deployment.js && node --check api/server.mjs && node --check api/sync-superset.mjs",
     "test": "node --test test/*.test.js",
-    "seed:supabase": "node scripts/seed-reference-data.mjs",
     "android:sync": "npx cap sync android",
-    "android:build:debug": "cd android && gradlew.bat assembleDebug"
+    "android:build:debug": "cd android && gradlew.bat assembleDebug",
+    "stack:up": "docker compose up -d --build",
+    "stack:down": "docker compose down",
+    "stack:logs": "docker compose logs -f api"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",

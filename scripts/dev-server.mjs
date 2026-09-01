@@ -4,12 +4,9 @@
  * Menjalankan `npm run dev` menyajikan berkas statis di http://localhost:4173
  * dan MEMPROKSIKAN permintaan API ke Supabase Edge Function.
  *
- * Proksi itu bukan kemewahan. Edge Function hanya memantulkan
- * `Access-Control-Allow-Origin` untuk origin yang terdaftar di `APP_ORIGINS`,
- * dan `http://localhost:4173` tidak ada di sana — sehingga browser menolak
- * setiap permintaan dari mesin lokal sebelum sempat terkirim. CORS adalah
- * aturan browser, bukan aturan server, jadi permintaan yang diteruskan dari
- * proses Node ini lolos tanpa perlu menyentuh secret produksi sama sekali.
+ * Proksi ini menyamakan pengembangan dengan produksi: di kedua tempat browser
+ * memanggil `/api/inbound` pada origin yang sama, sehingga tidak ada perilaku
+ * CORS yang hanya muncul di salah satunya.
  *
  * Berkas ini tidak pernah ikut ter-deploy: `.vercelignore` mengecualikan
  * `scripts`, dan paket statis produksi hanya berisi index.html, style.css,
@@ -21,11 +18,10 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SUPABASE_FUNCTION_URL } from "../js/deployment.js";
-
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const PORT = Number(process.env.PORT) || 4173;
-const UPSTREAM = SUPABASE_FUNCTION_URL;
+// API lokal. Jalankan `docker compose up -d db api` lalu `npm run dev`.
+const UPSTREAM = process.env.API_UPSTREAM || "http://localhost:8080/api/inbound";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",

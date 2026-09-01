@@ -9,7 +9,8 @@ const {
   exists,
   listFiles,
   allFrontend,
-  allMigrations,
+  schema,
+  apiServer,
   FRONTEND_MODULES,
   importModule,
 } = require("./helpers");
@@ -87,8 +88,10 @@ test("polling papan memakai ETag sehingga siklus tanpa perubahan dijawab 304", (
   const api = read("js/api.js");
   assert.match(api, /If-None-Match/);
   assert.match(api, /response\.status === 304/);
-  assert.match(read("supabase/functions/inbound-api/index.ts"), /matchesEtag\(request, etag\)/);
-  assert.match(allMigrations(), /'fingerprint', md5\(/);
+  // API membandingkan If-None-Match sendiri, tanpa helper terpisah.
+  assert.match(apiServer(), /if-none-match/);
+  assert.match(apiServer(), /send\(response, 304/);
+  assert.match(schema(), /'fingerprint', md5\(/);
 });
 
 test("menulis membatalkan cache ETag agar papan tidak tampak tidak berubah", () => {
@@ -96,16 +99,16 @@ test("menulis membatalkan cache ETag agar papan tidak tampak tidak berubah", () 
 });
 
 test("papan mengirim satu baris per tiket, bukan satu baris per PO", () => {
-  const sql = allMigrations();
-  assert.match(sql, /create or replace view public\.inbound_board/);
+  const sql = schema();
+  assert.match(sql, /create or replace view inbound_board/);
   assert.match(sql, /with po_rollup as \(/, "PO harus diagregasi di server");
   assert.match(sql, /string_agg\(po_number/);
-  assert.match(read("supabase/functions/inbound-api/index.ts"), /inbound_board_snapshot/);
+  assert.match(apiServer(), /inbound_board_snapshot/);
 });
 
 test("riwayat laporan dibatasi rentang tanggal di server", () => {
-  assert.match(allMigrations(), /create or replace function public\.inbound_history/);
-  assert.match(allMigrations(), /b\.operational_date::date between x\.from_date and x\.to_date/);
+  assert.match(schema(), /create or replace function inbound_history/);
+  assert.match(schema(), /b\.operational_date::date between x\.from_date and x\.to_date/);
   assert.match(read("js/api.js"), /export function fetchHistory\(from, to\)/);
 });
 
@@ -116,8 +119,8 @@ test("polling tidak lebih cepat dari sepuluh detik dan berhenti saat tab tersemb
 });
 
 test("index tersedia untuk jalur kueri papan", () => {
-  assert.match(allMigrations(), /create index if not exists tickets_board_idx/);
-  assert.match(allMigrations(), /create index if not exists ticket_pos_rollup_idx/);
+  assert.match(schema(), /create index if not exists tickets_board_idx/);
+  assert.match(schema(), /create index if not exists ticket_pos_ticket_idx/);
 });
 
 /* -- Aksesibilitas --------------------------------------------------------- */
@@ -274,7 +277,7 @@ test("registry gudang tetap sinkron dengan seed site_master", async () => {
   );
   assert.deepEqual(activeSites().map((site) => site.code), ["PGS"], "hanya PGS yang aktif");
 
-  const sql = allMigrations();
+  const sql = schema();
   sites.forEach((site) => {
     assert.match(sql, new RegExp(`'${site.code}'\\s*,\\s*'${site.location_id}'`), `${site.code} harus ada di seed`);
   });
@@ -312,17 +315,17 @@ test("paket deployment statis tidak membawa berkas backend atau rahasia", () => 
   });
 });
 
-test("setiap migrasi transaksional ditutup dengan benar", () => {
-  const files = listFiles("supabase/migrations").filter((file) => file.endsWith(".sql"));
-  assert.ok(files.length >= 7, "seluruh migrasi harus hadir");
-
-  files.forEach((file) => {
-    const sql = read(`supabase/migrations/${file}`);
-    // Migrasi yang menyentuh pg_cron dan Vault sengaja berjalan di luar
-    // transaksi, karena beberapa perintahnya tidak sah di dalam blok. Yang
-    // wajib dijaga adalah: begin tanpa commit tidak boleh terjadi.
-    const opens = /^begin;/m.test(sql);
-    const closes = /^commit;/m.test(sql);
-    assert.equal(opens, closes, `${file} membuka transaksi tanpa menutupnya`);
+test("skema aman diterapkan berulang kali", () => {
+  // API menerapkan db/schema.sql pada SETIAP start, jadi setiap pernyataan
+  // wajib idempoten — kalau tidak, kontainer gagal start pada deploy kedua.
+  const sql = schema();
+  const creates = [...sql.matchAll(/^create (?:or replace )?(?:table|index|view|function|extension)[^;(]*/gim)];
+  assert.ok(creates.length > 20, "skema harus punya banyak objek");
+  creates.forEach((match) => {
+    const statement = match[0];
+    assert.ok(
+      /if not exists/i.test(statement) || /or replace/i.test(statement),
+      `tidak idempoten: ${statement.slice(0, 70)}`,
+    );
   });
 });
