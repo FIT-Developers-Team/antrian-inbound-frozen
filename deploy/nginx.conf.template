@@ -22,8 +22,13 @@
 # skrip itu: alamat DNS internal Docker tidak sama di setiap jenis jaringan.
 
 server {
-  listen 80;
-  listen [::]:80;
+  # Port dapat diatur lewat lingkungan. Platform seperti Coolify menyimpan
+  # setelan port per aplikasi, dan setelan itu dibuat SEBELUM Dockerfile ini
+  # ada — sehingga nilainya bisa jadi bukan 80, dan proxy platform berakhir
+  # menembak port yang tidak ada sama sekali (Bad Gateway walau kontainernya
+  # sehat). Menyamakan lewat NGINX_PORT lebih mudah daripada menebak.
+  listen ${NGINX_PORT};
+  listen [::]:${NGINX_PORT};
   server_name _;
 
   root /usr/share/nginx/html;

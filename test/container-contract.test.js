@@ -108,7 +108,17 @@ test("health check tidak bergantung pada Supabase", () => {
   assert.match(health, /return 200/);
   assert.doesNotMatch(health, /proxy_pass/);
   assert.match(dockerfile, /HEALTHCHECK/);
-  assert.match(dockerfile, /localhost\/healthz/);
+  // Health check mengikuti port yang sama dengan yang didengarkan nginx.
+  assert.match(dockerfile, /localhost:\$\{NGINX_PORT\}\/healthz/);
+});
+
+test("port dapat diatur lewat lingkungan", () => {
+  // Platform menyimpan setelan port per aplikasi, dan setelan itu dibuat
+  // sebelum Dockerfile ini ada — sehingga proxy dapat menembak port yang tidak
+  // didengarkan siapa pun, menghasilkan Bad Gateway walau kontainernya sehat.
+  assert.match(nginx, /listen \$\{NGINX_PORT\}/);
+  assert.match(nginx, /listen \[::\]:\$\{NGINX_PORT\}/);
+  assert.match(dockerfile, /ENV NGINX_PORT=80/);
 });
 
 /* -- Frontend ------------------------------------------------------------- */

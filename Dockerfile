@@ -32,10 +32,14 @@ COPY assets/ ./assets/
 # proyek Supabase. Ini BUKAN rahasia — ia sudah tampak di URL publik.
 ENV SUPABASE_PROJECT_REF=qiafoaoslnbmtsbnmqou
 
+# Port yang didengarkan nginx. Samakan dengan setelan port aplikasi di platform
+# bila platform tersebut tidak membaca EXPOSE di bawah.
+ENV NGINX_PORT=80
+
 EXPOSE 80
 
 # Health check dijawab nginx sendiri di /healthz, tanpa menyentuh Supabase,
 # supaya backend yang sedang bermasalah tidak membuat Coolify mengira
 # kontainernya mati dan menggulung deployment yang sebenarnya sehat.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget --quiet --tries=1 --spider http://localhost/healthz || exit 1
+  CMD wget --quiet --tries=1 --spider "http://localhost:${NGINX_PORT}/healthz" || exit 1
