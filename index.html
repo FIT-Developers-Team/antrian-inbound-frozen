@@ -1,320 +1,57 @@
 <!doctype html>
-<html class="dark" lang="id">
+<html lang="id">
   <head>
     <meta charset="utf-8" />
-    <meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Antrian Inbound Frozen</title>
     <meta
       name="description"
-      content="Sistem antrian inbound frozen: pendaftaran security, panggilan gate, checker per PO, dan monitoring SLA."
+      content="Antrean inbound gudang beku: catat kedatangan, mulai bongkar, dan pantau hitung mundur SLA dalam satu papan."
     />
-    <meta name="theme-color" content="#081425" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#f5f8ff" media="(prefers-color-scheme: light)" />
-    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#09111f" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4f7fb" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="light dark" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="preconnect" href="https://cdn.tailwindcss.com" />
-
-    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link rel="preconnect" href="https://qiafoaoslnbmtsbnmqou.supabase.co" />
     <link
-      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&family=JetBrains+Mono:wght@600;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
       rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&family=Inconsolata:wght@400;700&display=swap"
     />
+
     <link rel="icon" type="image/png" href="assets/login-logo.png" />
     <link rel="apple-touch-icon" href="assets/login-logo.png" />
-    <link
-      rel="preload"
-      as="image"
-      href="assets/login-banner.webp"
-      type="image/webp"
-    />
-    <link
-      rel="preload"
-      as="image"
-      href="assets/login-logo.png"
-      type="image/png"
-    />
-    <link rel="stylesheet" href="style.css?v=25.0" />
+    <link rel="preload" as="image" href="assets/login-banner.webp" type="image/webp" />
+    <link rel="stylesheet" href="style.css?v=26.5" />
+
     <script>
-      tailwind.config = {
-        darkMode: "class",
-        theme: {
-          extend: {
-            colors: {
-              background: "rgb(var(--background) / <alpha-value>)",
-              surface: "rgb(var(--surface) / <alpha-value>)",
-              "surface-container-lowest":
-                "rgb(var(--surface-container-lowest) / <alpha-value>)",
-              "surface-container-low":
-                "rgb(var(--surface-container-low) / <alpha-value>)",
-              "surface-container":
-                "rgb(var(--surface-container) / <alpha-value>)",
-              "surface-container-high":
-                "rgb(var(--surface-container-high) / <alpha-value>)",
-              "surface-container-highest":
-                "rgb(var(--surface-container-highest) / <alpha-value>)",
-              "on-surface": "rgb(var(--on-surface) / <alpha-value>)",
-              "on-surface-variant":
-                "rgb(var(--on-surface-variant) / <alpha-value>)",
-              primary: "rgb(var(--primary) / <alpha-value>)",
-              "primary-container":
-                "rgb(var(--primary-container) / <alpha-value>)",
-              "on-primary": "rgb(var(--on-primary) / <alpha-value>)",
-              "on-primary-container":
-                "rgb(var(--on-primary-container) / <alpha-value>)",
-              secondary: "rgb(var(--secondary) / <alpha-value>)",
-              "secondary-container":
-                "rgb(var(--secondary-container) / <alpha-value>)",
-              "on-secondary-container":
-                "rgb(var(--on-secondary-container) / <alpha-value>)",
-              tertiary: "rgb(var(--tertiary) / <alpha-value>)",
-              error: "rgb(var(--error) / <alpha-value>)",
-              "error-container": "rgb(var(--error-container) / <alpha-value>)",
-              "on-error-container":
-                "rgb(var(--on-error-container) / <alpha-value>)",
-              outline: "rgb(var(--outline) / <alpha-value>)",
-              "outline-variant": "rgb(var(--outline-variant) / <alpha-value>)",
-              success: "rgb(var(--success) / <alpha-value>)",
-              warning: "rgb(var(--warning) / <alpha-value>)",
-            },
-            fontFamily: {
-              "queue-id": ["JetBrains Mono"],
-              "body-md": ["Montserrat"],
-              "label-sm": ["Montserrat"],
-              "headline-md": ["Montserrat"],
-            },
-            spacing: {
-              "row-height-md": "56px",
-              "container-padding": "24px",
-              gutter: "16px",
-            },
-            fontSize: {
-              "label-sm": ["12px", { lineHeight: "16px", fontWeight: "700" }],
-              "queue-id": [
-                "20px",
-                {
-                  lineHeight: "24px",
-                  letterSpacing: ".05em",
-                  fontWeight: "700",
-                },
-              ],
-              "headline-md": [
-                "24px",
-                { lineHeight: "32px", fontWeight: "700" },
-              ],
-            },
-          },
-        },
-      };
+      /* Tema dipasang sebelum paint pertama supaya tidak ada kedipan putih di
+         perangkat bertema gelap. Sengaja sebaris dan sinkron. */
+      (function () {
+        try {
+          var mode = localStorage.getItem("inbound_frozen_theme_v2");
+          if (mode === "dark") document.documentElement.classList.add("dark");
+          if (mode === "light") document.documentElement.classList.add("light");
+        } catch (error) {
+          /* Mode penyamaran memakai preferensi sistem. */
+        }
+      })();
     </script>
   </head>
-  <body
-    class="bg-background text-on-surface font-body-md overflow-hidden transition-colors duration-500"
-  >
+
+  <body>
     <noscript>
       <div class="noscript-banner">
-        Aplikasi ini memerlukan JavaScript. Aktifkan JavaScript di browser, lalu
-        muat ulang halaman.
+        Aplikasi ini memerlukan JavaScript. Aktifkan JavaScript di browser, lalu muat ulang halaman.
       </div>
     </noscript>
 
-    <a class="skip-link" href="#page-root">Lompat ke konten utama</a>
-
-    <div class="relative z-10 flex h-screen overflow-hidden">
-      <aside
-        id="sidebar-panel"
-        aria-label="Menu utama"
-        class="bg-surface-container-lowest/80 border-r border-outline-variant w-64 h-screen flex-col py-4 gap-2 hidden md:flex transition-all duration-300"
-      >
-        <div class="px-6 mb-8">
-          <h1
-            id="brand-name"
-            class="font-headline-md text-2xl font-extrabold text-on-surface tracking-tight"
-          >
-            Inbound Frozen
-          </h1>
-          <p
-            id="brand-site"
-            class="font-label-sm text-label-sm text-on-surface-variant opacity-70 uppercase tracking-widest"
-          >
-            Sistem Antrian
-          </p>
-        </div>
-
-        <nav id="side-nav" aria-label="Navigasi halaman" class="flex-1 flex flex-col gap-1">
-          <button type="button" data-page="spv_dashboard" class="nav-btn">
-            <span class="material-symbols-outlined" aria-hidden="true">space_dashboard</span
-            ><span>Dashboard SPV</span>
-          </button>
-          <button type="button" data-page="daftar" class="nav-btn">
-            <span class="material-symbols-outlined" aria-hidden="true">app_registration</span
-            ><span>Daftar</span>
-          </button>
-          <button type="button" data-page="checker" class="nav-btn">
-            <span class="material-symbols-outlined" aria-hidden="true">fact_check</span
-            ><span>Checker</span>
-          </button>
-          <button type="button" data-page="panggil" class="nav-btn">
-            <span class="material-symbols-outlined" aria-hidden="true">campaign</span
-            ><span>Panggil</span>
-          </button>
-          <button type="button" data-page="monitor" class="nav-btn">
-            <span class="material-symbols-outlined" aria-hidden="true">dashboard</span
-            ><span>Waiting Monitor</span>
-          </button>
-          <button type="button" data-page="commercial" class="nav-btn">
-            <span class="material-symbols-outlined" aria-hidden="true">manage_search</span
-            ><span>COMERCIAL</span>
-          </button>
-          <button type="button" data-page="laporan" class="nav-btn">
-            <span class="material-symbols-outlined" aria-hidden="true">assessment</span
-            ><span>Waiting List</span>
-          </button>
-          <button type="button" data-page="dropoff" class="nav-btn">
-            <span class="material-symbols-outlined" aria-hidden="true">move_to_inbox</span
-            ><span>Drop-Off</span>
-          </button>
-          <button type="button" data-page="ba_reject" class="nav-btn">
-            <span class="material-symbols-outlined" aria-hidden="true">description</span
-            ><span>BA Reject</span>
-          </button>
-        </nav>
-
-        <div
-          class="mt-auto flex flex-col gap-1 border-t border-outline-variant pt-4"
-        >
-          <button type="button" data-page="setting" class="nav-btn">
-            <span class="material-symbols-outlined" aria-hidden="true">settings</span
-            ><span>Setting</span>
-          </button>
-          <button type="button" data-page="debug" class="nav-btn">
-            <span class="material-symbols-outlined" aria-hidden="true">bug_report</span
-            ><span>Debug</span>
-          </button>
-        </div>
-      </aside>
-
-      <main class="flex-1 flex flex-col overflow-hidden">
-        <header
-          class="flex justify-between items-center w-full px-container-padding h-row-height-md bg-surface/50 border-b border-outline-variant z-20"
-        >
-          <div class="flex items-center gap-3 min-w-0">
-            <button
-              type="button"
-              id="sidebar-toggle"
-              class="p-2 rounded-full hover:bg-surface-container-high transition-colors"
-              onclick="toggleSidebar()"
-              aria-controls="sidebar-panel"
-              aria-expanded="true"
-              aria-label="Sembunyikan atau tampilkan menu"
-              title="Sembunyikan / tampilkan menu"
-            >
-              <span class="material-symbols-outlined" id="sidebar-toggle-icon" aria-hidden="true"
-                >menu_open</span
-              >
-            </button>
-            <h2
-              id="page-title"
-              class="font-headline-md text-headline-md font-bold text-primary truncate"
-            >
-              Daftar
-            </h2>
-            <div class="hidden sm:block h-6 w-px bg-outline-variant" aria-hidden="true"></div>
-            <span
-              id="page-subtitle"
-              class="hidden sm:inline font-label-sm text-label-sm bg-surface-container-high text-primary px-3 py-1 rounded-full border border-primary/20 truncate"
-              >Input security</span
-            >
-          </div>
-          <div class="flex items-center gap-2 sm:gap-4">
-            <label id="site-switcher-wrap" class="site-switcher" hidden>
-              <span class="material-symbols-outlined" aria-hidden="true">warehouse</span>
-              <span class="sr-only">Pilih gudang</span>
-              <select id="site-switcher" onchange="switchInboundSite(this.value)"></select>
-            </label>
-            <span
-              id="api-pill"
-              role="status"
-              class="hidden md:inline-flex items-center gap-2 text-[11px] px-3 py-1 rounded-full border border-outline-variant bg-surface-container/70 text-on-surface-variant"
-              ><span class="w-2 h-2 rounded-full bg-error" aria-hidden="true"></span>API belum
-              diset</span
-            >
-            <span
-              id="live-clock"
-              class="hidden lg:block font-queue-id text-sm text-on-surface-variant"
-            ></span>
-            <button
-              type="button"
-              class="p-2 rounded-full hover:bg-surface-container-high transition-colors"
-              onclick="toggleTheme()"
-              aria-label="Ganti tema terang atau gelap"
-              title="Ganti tema"
-            >
-              <span class="material-symbols-outlined" id="theme-icon" aria-hidden="true"
-                >dark_mode</span
-              >
-            </button>
-          </div>
-        </header>
-
-        <div
-          id="mobile-menu-bar"
-          class="md:hidden bg-surface-container-lowest/80 border-b border-outline-variant px-3 py-2 overflow-x-auto"
-        >
-          <nav id="mobile-nav" aria-label="Navigasi halaman (mobile)" class="flex gap-2 min-w-max">
-            <button type="button" data-page="spv_dashboard" class="mobile-nav-btn">
-              Dashboard SPV
-            </button>
-            <button type="button" data-page="daftar" class="mobile-nav-btn">Daftar</button>
-            <button type="button" data-page="checker" class="mobile-nav-btn">Checker</button>
-            <button type="button" data-page="panggil" class="mobile-nav-btn">Panggil</button>
-            <button type="button" data-page="monitor" class="mobile-nav-btn">
-              Waiting Monitor
-            </button>
-            <button type="button" data-page="commercial" class="mobile-nav-btn">
-              COMERCIAL
-            </button>
-            <button type="button" data-page="laporan" class="mobile-nav-btn">
-              Waiting List
-            </button>
-            <button type="button" data-page="dropoff" class="mobile-nav-btn">Drop-Off</button>
-            <button type="button" data-page="ba_reject" class="mobile-nav-btn">BA Reject</button>
-            <button type="button" data-page="setting" class="mobile-nav-btn">Setting</button>
-            <button type="button" data-page="debug" class="mobile-nav-btn">Debug</button>
-          </nav>
-        </div>
-
-        <section
-          id="page-root"
-          tabindex="-1"
-          aria-busy="true"
-          class="flex-1 overflow-y-auto p-container-padding space-y-gutter"
-        >
-          <div class="app-boot" role="status">
-            <span class="app-boot-spinner" aria-hidden="true"></span>
-            <p>Menyiapkan Antrian Inbound Frozen…</p>
-          </div>
-        </section>
-      </main>
+    <div class="app-boot" role="status" id="initial-boot">
+      <span class="spinner" aria-hidden="true"></span>
+      <p>Menyiapkan Antrian Inbound Frozen…</p>
     </div>
 
-    <div
-      class="fixed bottom-10 left-1/2 -translate-x-1/2 bg-on-surface text-surface px-6 py-3 rounded-full font-bold shadow-2xl opacity-0 transition-all transform translate-y-10 pointer-events-none z-50 flex items-center gap-3"
-      id="toast"
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-    >
-      <span class="material-symbols-outlined" aria-hidden="true">check_circle</span
-      ><span id="toast-message">Berhasil</span>
-    </div>
-
-  <script src="js/site_config.js?v=25.0"></script>
-  <script src="js/supabase_backend.js?v=25.0"></script>
-  <script src="js/dropoff_domain.js?v=25.0"></script>
-<script src="js/app.js?v=25.0"></script>
-<script src="js/realtime_client.js?v=25.0"></script>
-<script src="js/api_v2.js?v=25.0"></script>
+    <script type="module" src="js/app.js?v=26.5"></script>
   </body>
 </html>

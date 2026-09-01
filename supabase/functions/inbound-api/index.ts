@@ -1,3 +1,15 @@
+/* ============================================================================
+ * ANTRIAN INBOUND FROZEN — EDGE FUNCTION
+ *
+ * Satu-satunya permukaan API. Browser tidak pernah menyentuh Postgres langsung
+ * dan tidak pernah memegang service-role key.
+ *
+ * Permukaan aksi sengaja dipersempit menjadi apa yang benar-benar dipakai
+ * aplikasi setelah revamp. Aksi lama untuk BA reject, pencarian produk,
+ * tracker komersial, dan `export_rows` tanpa batas tanggal dihapus bersama
+ * halaman yang memakainya.
+ * ========================================================================== */
+
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import {
   clean,
@@ -14,18 +26,25 @@ type ConfiguredUser = { username: string; password: string; role: string; displa
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const db = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+const db = createClient(url, serviceKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 const encoder = new TextEncoder();
 
-/** Jendela hari operasional yang dikirim ke browser. Riwayat lama diambil lewat export_rows. */
-const DEFAULT_DAYS_BACK = Number(clean(Deno.env.get("INBOUND_SNAPSHOT_DAYS_BACK"))) || 7;
+/** Jendela hari operasional yang dikirim ke papan. Riwayat diambil terpisah. */
+const DEFAULT_DAYS_BACK = Number(clean(Deno.env.get("INBOUND_BOARD_DAYS_BACK"))) || 2;
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
-  if (error && typeof error === "object" && "message" in error) return clean((error as { message?: unknown }).message);
+  if (error && typeof error === "object" && "message" in error) {
+    return clean((error as { message?: unknown }).message);
+  }
   return String(error);
 }
 
+/* --------------------------------------------------------------------------
+ * Sesi bertanda tangan
+ * ----------------------------------------------------------------------- */
 function base64Url(bytes: Uint8Array): string {
   let raw = "";
   for (const byte of bytes) raw += String.fromCharCode(byte);
@@ -33,15 +52,23 @@ function base64Url(bytes: Uint8Array): string {
 }
 
 function decodeBase64Url(value: string): Uint8Array {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
-  const raw = atob(normalized);
-  return Uint8Array.from(raw, (char) => char.charCodeAt(0));
+  const normalized = value
+    .replace(/-/g, "+")
+    .replace(/_/g, "/")
+    .padEnd(Math.ceil(value.length / 4) * 4, "=");
+  return Uint8Array.from(atob(normalized), (char) => char.charCodeAt(0));
 }
 
 async function hmac(value: string): Promise<string> {
   const secret = clean(Deno.env.get("INBOUND_AUTH_SECRET"));
   if (!secret) throw new Error("INBOUND_AUTH_SECRET belum diset di Supabase Secrets.");
-  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
   return base64Url(new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(value))));
 }
 
@@ -51,8 +78,7 @@ async function signSession(session: Session): Promise<string> {
 }
 
 async function readSession(request: Request): Promise<Session | null> {
-  const authorization = clean(request.headers.get("authorization"));
-  const token = authorization.replace(/^Bearer\s+/i, "");
+  const token = clean(request.headers.get("authorization")).replace(/^Bearer\s+/i, "");
   const [encoded, signature] = token.split(".");
   if (!encoded || !signature || !constantTimeEqual(signature, await hmac(encoded))) return null;
   try {
@@ -63,83 +89,145 @@ async function readSession(request: Request): Promise<Session | null> {
   }
 }
 
+/** Dilempar ketika daftar akun tidak dapat dibaca — bukan karena salah sandi. */
+class AuthConfigError extends Error {}
+
+/**
+ * Membaca daftar akun dari `INBOUND_AUTH_USERS`.
+ *
+ * Setiap kegagalan di sini adalah masalah konfigurasi server, bukan kesalahan
+ * operator. Sebelumnya semuanya berakhir sebagai 401 "Username atau password
+ * salah", sehingga secret yang belum diset dan sandi yang keliru terlihat
+ * persis sama dari layar login — dan tidak ada cara membedakannya tanpa akses
+ * ke log Supabase.
+ */
 function configuredUsers(): ConfiguredUser[] {
-  const raw = Deno.env.get("INBOUND_AUTH_USERS") || "[]";
-  const users = JSON.parse(raw);
-  if (!Array.isArray(users)) throw new Error("INBOUND_AUTH_USERS harus berupa JSON array.");
-  const commercialRaw = Deno.env.get("INBOUND_COMMERCIAL_USER") || "";
-  if (!commercialRaw) return users;
-  const commercial = JSON.parse(commercialRaw);
-  const commercialUsers = Array.isArray(commercial) ? commercial : [commercial];
-  return [...users, ...commercialUsers];
+  const raw = clean(Deno.env.get("INBOUND_AUTH_USERS"));
+  if (!raw) {
+    throw new AuthConfigError(
+      "INBOUND_AUTH_USERS belum diset di Supabase Secrets, jadi belum ada akun yang dapat masuk.",
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new AuthConfigError(
+      "INBOUND_AUTH_USERS bukan JSON yang sah. Formatnya harus array, contoh: " +
+        '[{"username":"admin","password":"...","role":"ADMIN","display_name":"Admin"}]',
+    );
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new AuthConfigError("INBOUND_AUTH_USERS harus berupa JSON array.");
+  }
+  if (parsed.length === 0) {
+    throw new AuthConfigError("INBOUND_AUTH_USERS berisi array kosong; belum ada akun terdaftar.");
+  }
+  return parsed as ConfiguredUser[];
 }
+
+const KNOWN_ROLES = ["SECURITY", "CHECKER", "SPV", "ADMIN", "DEVELOPER"];
 
 function authenticate(body: Record<string, unknown>): Session | null {
   const username = clean(body.username).toLowerCase();
   const password = String(body.password || "");
-  const user = configuredUsers().find((candidate) =>
-    clean(candidate.username).toLowerCase() === username && constantTimeEqual(String(candidate.password || ""), password)
+  const user = configuredUsers().find(
+    (candidate) =>
+      clean(candidate.username).toLowerCase() === username &&
+      // Perbandingan waktu-tetap: perbandingan biasa membocorkan panjang awalan
+      // password yang cocok lewat selisih waktu respons.
+      constantTimeEqual(String(candidate.password || ""), password),
   );
   if (!user) return null;
+
+  const role = clean(user.role).toUpperCase();
+  // Peran yang salah ketik akan lolos login lalu ditolak oleh setiap aksi,
+  // yang di layar tampak seperti aplikasi rusak, bukan seperti salah konfigurasi.
+  if (!KNOWN_ROLES.includes(role)) {
+    throw new AuthConfigError(
+      `Akun "${clean(user.username)}" memakai role "${clean(user.role)}" yang tidak dikenal. ` +
+        `Role yang sah: ${KNOWN_ROLES.join(", ")}.`,
+    );
+  }
+
   return {
     username: clean(user.username),
-    role: clean(user.role).toUpperCase(),
+    role,
     display_name: clean(user.display_name) || clean(user.username),
     exp: Date.now() + 12 * 60 * 60 * 1000,
   };
 }
 
-const READ_ROLES = ["SECURITY", "CHECKER", "SPV", "ADMIN", "DEVELOPER", "COMERCIAL"];
-const WRITE_ROLES = ["SECURITY", "CHECKER", "SPV", "ADMIN", "DEVELOPER"];
+/**
+ * Diagnostik konfigurasi akun. Sengaja TIDAK memuat username maupun password —
+ * hanya jumlah akun, keabsahan JSON, dan daftar role — supaya cukup untuk
+ * menjawab "kenapa tidak bisa login" tanpa menjadi alat pengintai bagi orang
+ * luar. Inilah yang dibaca `npm run doctor`.
+ */
+function authStatus(): Record<string, unknown> {
+  const present = Boolean(clean(Deno.env.get("INBOUND_AUTH_USERS")));
+  try {
+    const users = configuredUsers();
+    const roles = [...new Set(users.map((user) => clean(user.role).toUpperCase()))];
+    return {
+      secret_present: present,
+      parse_ok: true,
+      users_configured: users.length,
+      roles,
+      unknown_roles: roles.filter((role) => !KNOWN_ROLES.includes(role)),
+      accounts_missing_password: users.filter((user) => !String(user.password || "")).length,
+      auth_secret_present: Boolean(clean(Deno.env.get("INBOUND_AUTH_SECRET"))),
+      allowed_origins: clean(Deno.env.get("APP_ORIGINS")).split(",").map((o) => o.trim()).filter(Boolean),
+    };
+  } catch (error) {
+    return {
+      secret_present: present,
+      parse_ok: false,
+      users_configured: 0,
+      message: error instanceof Error ? error.message : String(error),
+      auth_secret_present: Boolean(clean(Deno.env.get("INBOUND_AUTH_SECRET"))),
+      allowed_origins: clean(Deno.env.get("APP_ORIGINS")).split(",").map((o) => o.trim()).filter(Boolean),
+    };
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Otorisasi
+ * ----------------------------------------------------------------------- */
+const READ_ACTIONS = ["board", "history", "sites", "source_freshness"];
+const ALL_ROLES = ["SECURITY", "CHECKER", "SPV", "ADMIN", "DEVELOPER"];
+
+/** Peran yang boleh menjalankan tiap aksi tulis. */
+const WRITE_ACTIONS: Record<string, string[]> = {
+  create_ticket: ["SECURITY", "SPV", "ADMIN", "DEVELOPER"],
+  po_master: ["SECURITY", "SPV", "ADMIN", "DEVELOPER"],
+  // Kedatangan dicatat Security di pos masuk; Checker dan SPV boleh mengoreksi.
+  set_arrival: ALL_ROLES,
+  call_ticket: ["CHECKER", "SPV", "ADMIN", "DEVELOPER"],
+  start_unloading: ["CHECKER", "SPV", "ADMIN", "DEVELOPER"],
+  finish_unloading: ["CHECKER", "SPV", "ADMIN", "DEVELOPER"],
+  cancel_ticket: ["SPV", "ADMIN", "DEVELOPER"],
+  delete_tickets_by_date: ["ADMIN", "DEVELOPER"],
+  delete_single_ticket: ["ADMIN", "DEVELOPER"],
+};
 
 function canUseAction(session: Session | null, action: string): boolean {
   if (!session) return false;
-  const role = session.role;
-  if (["delete_tickets_by_date", "delete_single_ticket"].includes(action)) return ["ADMIN", "DEVELOPER"].includes(role);
-  if (action === "bulk_complete_operational") return role === "DEVELOPER";
-  if (["state", "state_delta", "realtime_config", "tickets", "export_rows", "sites"].includes(action)) {
-    return READ_ROLES.includes(role);
-  }
-  // Master PO hanya dipakai layar pendaftaran; COMERCIAL tidak perlu payload berat ini.
-  if (action === "po_master") return WRITE_ROLES.includes(role);
-  if (["create_ticket", "create_tickets_bulk"].includes(action)) {
-    return WRITE_ROLES.includes(role);
-  }
-  if (["superset_freshness", "ba_list", "ba_detail", "product_lookup", "create_ba"].includes(action)) {
-    return ["SPV", "ADMIN", "DEVELOPER"].includes(role);
-  }
-  // Kedatangan dicatat Security di pos masuk; Checker dan SPV boleh mengoreksi.
-  if (action === "set_arrival") return ["SECURITY", "CHECKER", "SPV", "ADMIN", "DEVELOPER"].includes(role);
-  return ["updatechecker", "startcheckerpo", "donecheckerpo", "donegrpo", "donegrpos", "handovergrn", "failcall", "update_ticket_status", "start_unloading"].includes(action)
-    && ["CHECKER", "SPV", "ADMIN", "DEVELOPER"].includes(role);
+  if (READ_ACTIONS.includes(action)) return ALL_ROLES.includes(session.role);
+  return WRITE_ACTIONS[action]?.includes(session.role) ?? false;
 }
 
+/* --------------------------------------------------------------------------
+ * Bantuan
+ * ----------------------------------------------------------------------- */
 async function bodyOf(request: Request): Promise<Record<string, unknown>> {
   if (request.method !== "POST") return {};
-  try { return await request.json(); } catch { return {}; }
-}
-
-/**
- * Pagination stabil. `range()` tanpa kolom urut yang unik dapat melewatkan atau
- * menduplikasi baris ketika kolom urutnya punya nilai kembar, jadi selalu ada
- * tiebreaker unik di urutan kedua.
- */
-async function fetchAll(
-  table: string,
-  select = "*",
-  orderColumn = "created_at",
-  ascending = false,
-  tiebreaker = "",
-): Promise<Record<string, unknown>[]> {
-  const rows: Record<string, unknown>[] = [];
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    let query = db.from(table).select(select).order(orderColumn, { ascending });
-    if (tiebreaker) query = query.order(tiebreaker, { ascending: true });
-    const { data, error } = await query.range(from, from + PAGE - 1);
-    if (error) throw error;
-    rows.push(...(data || []));
-    if (!data || data.length < PAGE) return rows;
+  try {
+    return await request.json();
+  } catch {
+    return {};
   }
 }
 
@@ -150,17 +238,10 @@ async function rpc(name: string, args: Record<string, unknown>): Promise<unknown
 }
 
 function siteParam(requestUrl: URL, body: Record<string, unknown>): string | null {
-  const value = clean(requestUrl.searchParams.get("site") || body.site_code || body.site).toUpperCase();
-  return value || null;
+  return clean(requestUrl.searchParams.get("site") || body.site_code || body.site).toUpperCase() || null;
 }
 
-function daysBackParam(requestUrl: URL): number {
-  const raw = Number(clean(requestUrl.searchParams.get("days_back")));
-  if (!Number.isFinite(raw)) return DEFAULT_DAYS_BACK;
-  return Math.min(Math.max(Math.trunc(raw), 0), 90);
-}
-
-/** Membungkus payload ber-fingerprint jadi respons 200 + ETag atau 304. */
+/** Membungkus payload ber-fingerprint menjadi 200 + ETag atau 304 tanpa body. */
 function fingerprinted(
   request: Request,
   payload: Record<string, unknown>,
@@ -171,141 +252,165 @@ function fingerprinted(
   return jsonResponse(request, 200, { ok: true, data: payload }, { etag, ...extra });
 }
 
+/* --------------------------------------------------------------------------
+ * Router
+ * ----------------------------------------------------------------------- */
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return optionsResponse(request);
+
   const requestUrl = new URL(request.url);
   const body = await bodyOf(request);
   const action = clean(requestUrl.searchParams.get("action") || body.action).toLowerCase();
+
   try {
     if (request.method === "GET" && action === "health") {
-      return jsonResponse(request, 200, { ok: true, ...(await rpc("inbound_health", {}) as Record<string, unknown>) });
+      return jsonResponse(request, 200, {
+        ok: true,
+        ...((await rpc("inbound_health", {})) as Record<string, unknown>),
+      });
     }
+
+    // Diagnostik terbuka: menjawab "kenapa tidak bisa login" tanpa membocorkan
+    // username, password, maupun apa pun yang berguna bagi penyerang.
+    if (request.method === "GET" && action === "auth_status") {
+      return jsonResponse(request, 200, { ok: true, data: authStatus() });
+    }
+
     if (request.method === "POST" && action === "login") {
-      const session = authenticate(body);
-      if (!session) return jsonResponse(request, 401, { ok: false, message: "Username atau password salah." });
-      return jsonResponse(request, 200, { ok: true, data: { token: await signSession(session), user: {
-        username: session.username, role: session.role, display_name: session.display_name,
-      } } });
+      let session: Session | null;
+      try {
+        session = authenticate(body);
+      } catch (error) {
+        // Salah konfigurasi server dijawab 503, bukan 401. Keduanya gagal
+        // masuk, tetapi hanya satu di antaranya yang dapat diperbaiki operator
+        // dengan mengetik ulang sandinya.
+        if (error instanceof AuthConfigError) {
+          console.error("inbound-api auth config", error.message);
+          return jsonResponse(request, 503, { ok: false, message: error.message });
+        }
+        throw error;
+      }
+      if (!session) {
+        return jsonResponse(request, 401, { ok: false, message: "Username atau password salah." });
+      }
+      return jsonResponse(request, 200, {
+        ok: true,
+        data: {
+          token: await signSession(session),
+          user: {
+            username: session.username,
+            role: session.role,
+            display_name: session.display_name,
+          },
+        },
+      });
     }
+
     if (request.method === "POST" && action === "logout") return jsonResponse(request, 200, { ok: true });
 
     const session = await readSession(request);
-    if (!canUseAction(session, action)) return jsonResponse(request, 401, { ok: false, message: "Unauthorized" });
-    const site = siteParam(requestUrl, body);
-
-    if (request.method === "GET" && action === "realtime_config") {
-      return jsonResponse(request, 200, { ok: true, data: { enabled: false, url: "", publishable_key: "", topic: "", event: "" } });
+    if (!canUseAction(session, action)) {
+      return jsonResponse(request, 401, { ok: false, message: "Unauthorized" });
     }
+    const site = siteParam(requestUrl, body);
+    const actor = { role: session!.role, name: session!.display_name };
+
+    /* ---- Baca ---------------------------------------------------------- */
     if (request.method === "GET" && action === "sites") {
-      const { data, error } = await db.from("site_master")
+      const { data, error } = await db
+        .from("site_master")
         .select("site_code,location_id,site_name,short_name,gate_prefix,gate_count,active,sort_order")
         .order("sort_order");
       if (error) throw error;
       return jsonResponse(request, 200, { ok: true, data });
     }
-    if (request.method === "GET" && action === "state") {
-      const payload = await rpc("inbound_operational_snapshot", {
-        p_site_code: site, p_days_back: daysBackParam(requestUrl),
-      }) as Record<string, unknown>;
+
+    if (request.method === "GET" && action === "board") {
+      const raw = Number(clean(requestUrl.searchParams.get("days_back")));
+      const daysBack = Number.isFinite(raw) ? Math.min(Math.max(Math.trunc(raw), 0), 30) : DEFAULT_DAYS_BACK;
+      const payload = (await rpc("inbound_board_snapshot", {
+        p_site_code: site,
+        p_days_back: daysBack,
+      })) as Record<string, unknown>;
       return fingerprinted(request, payload, {
-        "x-inbound-rows": String((payload.outputForm as unknown[] | undefined)?.length ?? 0),
+        "x-inbound-rows": String((payload.rows as unknown[] | undefined)?.length ?? 0),
         "x-inbound-site": site || "ALL",
       });
     }
-    if (request.method === "GET" && action === "state_delta") {
-      const since = clean(requestUrl.searchParams.get("since"));
-      if (!since || Number.isNaN(new Date(since).getTime())) {
-        throw new Error("Parameter since wajib berupa timestamp ISO yang valid.");
-      }
-      const payload = await rpc("inbound_operational_delta", {
-        p_since: since, p_site_code: site, p_days_back: daysBackParam(requestUrl),
+
+    // Kesegaran rantai Superset → superset_po_master. Snapshot papan sudah
+    // membawanya, jadi ini hanya untuk pemeriksaan manual dan `npm run doctor`.
+    if (request.method === "GET" && action === "source_freshness") {
+      return jsonResponse(request, 200, {
+        ok: true,
+        data: await rpc("inbound_source_freshness", { p_site_code: site }),
       });
-      return jsonResponse(request, 200, { ok: true, data: payload });
     }
+
+    if (request.method === "GET" && action === "history") {
+      return jsonResponse(request, 200, {
+        ok: true,
+        data: await rpc("inbound_history", {
+          p_site_code: site,
+          p_from: clean(requestUrl.searchParams.get("from")) || null,
+          p_to: clean(requestUrl.searchParams.get("to")) || null,
+        }),
+      });
+    }
+
     if (request.method === "GET" && action === "po_master") {
-      // Fingerprint dihitung lebih dulu supaya klien yang sudah up-to-date
-      // tidak pernah memaksa Postgres membangun payload puluhan ribu baris.
-      const fingerprint = clean(await rpc("inbound_po_master_fingerprint", { p_site_code: site }) as string);
+      // Fingerprint dihitung lebih dulu supaya klien yang sudah mutakhir tidak
+      // pernah memaksa Postgres membangun payload puluhan ribu baris.
+      const fingerprint = clean(
+        (await rpc("inbound_po_master_fingerprint", { p_site_code: site })) as string,
+      );
       const etag = weakEtag(fingerprint);
       if (matchesEtag(request, etag)) return notModifiedResponse(request, etag);
-      const payload = await rpc("inbound_po_master", { p_site_code: site }) as Record<string, unknown>;
+      const payload = (await rpc("inbound_po_master", { p_site_code: site })) as Record<string, unknown>;
       return jsonResponse(request, 200, { ok: true, data: payload }, {
         etag: weakEtag(clean(payload.fingerprint) || fingerprint),
         "x-inbound-rows": String(payload.total ?? 0),
-        "x-inbound-site": site || "ALL",
       });
-    }
-    if (request.method === "GET" && action === "superset_freshness") return jsonResponse(request, 200, { ok: true, data: await rpc("inbound_superset_freshness", {}) });
-    if (request.method === "GET" && action === "export_rows") {
-      return jsonResponse(request, 200, {
-        ok: true,
-        data: await fetchAll("inbound_operational_rows", "*", "created_at", false, "ticket_po_id"),
-      });
-    }
-    if (request.method === "GET" && action === "tickets") {
-      let query = db.from("inbound_ticket_summaries").select("*").order("created_at", { ascending: false }).limit(5000);
-      const status = clean(requestUrl.searchParams.get("status"));
-      if (status) query = query.eq("status", status);
-      if (site) query = query.eq("site_code", site);
-      const { data, error } = await query; if (error) throw error;
-      return jsonResponse(request, 200, { ok: true, data });
-    }
-    if (request.method === "GET" && action === "product_lookup") {
-      const q = clean(requestUrl.searchParams.get("q"));
-      if (!q) throw new Error("SKU atau Product ID wajib diisi.");
-      let result = await db.from("product_master").select("sku_number,product_id,product_name").eq("sku_number", q).maybeSingle();
-      if (!result.data && !result.error) result = await db.from("product_master").select("sku_number,product_id,product_name").eq("product_id", q).limit(1).maybeSingle();
-      if (result.error) throw result.error;
-      return jsonResponse(request, 200, { ok: true, data: result.data });
-    }
-    if (request.method === "GET" && action === "ba_list") {
-      let query = db.from("ba_documents_summary").select("*").order("created_at", { ascending: false }).limit(500);
-      if (site) query = query.eq("site_code", site);
-      const { data, error } = await query; if (error) throw error;
-      return jsonResponse(request, 200, { ok: true, data });
-    }
-    if (request.method === "GET" && action === "ba_detail") {
-      const baId = clean(requestUrl.searchParams.get("ba_id"));
-      const [{ data: document, error: docError }, { data: items, error: itemError }] = await Promise.all([
-        db.from("ba_documents").select("*").eq("ba_id", baId).single(),
-        db.from("ba_items").select("*").eq("ba_id", baId).order("created_at"),
-      ]);
-      if (docError || itemError) throw docError || itemError;
-      return jsonResponse(request, 200, { ok: true, data: { document, items } });
     }
 
-    const actor = { role: session!.role, name: session!.display_name };
-    if (request.method === "POST" && ["create_ticket", "create_tickets_bulk"].includes(action)) {
-      const payload = action === "create_ticket" ? { tickets: [body], site_code: site } : { ...body, site_code: site ?? body.site_code };
-      const data = await rpc("inbound_create_tickets_bulk", { p_payload: payload, p_actor: actor });
-      const result = data as { created?: Record<string, unknown>[] };
-      return jsonResponse(request, 201, { ok: true, data: action === "create_ticket" ? result.created?.[0] : data });
+    /* ---- Tulis --------------------------------------------------------- */
+    if (request.method === "POST" && action === "create_ticket") {
+      const data = (await rpc("inbound_create_tickets_bulk", {
+        p_payload: { tickets: [body], site_code: site ?? body.site_code },
+        p_actor: actor,
+      })) as { created?: Record<string, unknown>[] };
+      return jsonResponse(request, 201, { ok: true, data: data.created?.[0] });
     }
-    if (request.method === "POST" && action === "set_arrival") {
-      return jsonResponse(request, 200, { ok: true, data: await rpc("inbound_set_arrival", { p_payload: body, p_actor: actor }) });
+
+    const TICKET_RPC: Record<string, string> = {
+      set_arrival: "inbound_set_arrival",
+      call_ticket: "inbound_call_ticket",
+      start_unloading: "inbound_start_unloading",
+      finish_unloading: "inbound_finish_unloading",
+      cancel_ticket: "inbound_cancel_ticket",
+    };
+    if (request.method === "POST" && TICKET_RPC[action]) {
+      return jsonResponse(request, 200, {
+        ok: true,
+        data: await rpc(TICKET_RPC[action], { p_payload: body, p_actor: actor }),
+      });
     }
-    if (request.method === "POST" && action === "start_unloading") {
-      return jsonResponse(request, 200, { ok: true, data: await rpc("inbound_start_unloading", { p_payload: body, p_actor: actor }) });
-    }
-    if (request.method === "POST" && action === "update_ticket_status") {
-      return jsonResponse(request, 200, { ok: true, data: await rpc("inbound_update_ticket_status", { p_payload: body, p_actor: actor }) });
-    }
-    if (request.method === "POST" && ["updatechecker", "startcheckerpo", "donecheckerpo", "donegrpo", "donegrpos", "handovergrn", "failcall"].includes(action)) {
-      return jsonResponse(request, 200, { ok: true, data: await rpc("inbound_update_ticket_pos", { p_action: action, p_payload: body, p_actor: actor }) });
-    }
+
     if (request.method === "POST" && action === "delete_tickets_by_date") {
-      return jsonResponse(request, 200, { ok: true, data: await rpc("inbound_delete_tickets_by_date", { p_operational_date: body.operational_date }) });
+      return jsonResponse(request, 200, {
+        ok: true,
+        data: await rpc("inbound_delete_tickets_by_date", { p_operational_date: body.operational_date }),
+      });
     }
+
     if (request.method === "POST" && action === "delete_single_ticket") {
-      return jsonResponse(request, 200, { ok: true, data: await rpc("inbound_delete_single_ticket", { p_payload: body }) });
+      return jsonResponse(request, 200, {
+        ok: true,
+        data: await rpc("inbound_delete_single_ticket", { p_payload: body }),
+      });
     }
-    if (request.method === "POST" && action === "bulk_complete_operational") {
-      return jsonResponse(request, 200, { ok: true, data: await rpc("inbound_bulk_complete_operational", { p_payload: body, p_actor: actor }) });
-    }
-    if (request.method === "POST" && action === "create_ba") {
-      return jsonResponse(request, 201, { ok: true, data: await rpc("inbound_create_ba", { p_payload: { ...body, site_code: site ?? body.site_code }, p_actor: actor }) });
-    }
-    return jsonResponse(request, 404, { ok: false, message: "Action belum tersedia di backend Supabase." });
+
+    return jsonResponse(request, 404, { ok: false, message: "Action tidak dikenal." });
   } catch (error) {
     const message = errorMessage(error) || "Supabase backend error";
     console.error("inbound-api", { action, message });

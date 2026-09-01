@@ -1,26 +1,25 @@
 {
   "name": "antrian-inbound-frozen",
   "private": true,
-  "version": "1.0.0",
-  "description": "Antrian Inbound Frozen - multi-site inbound queue application",
+  "version": "2.0.0",
+  "description": "Antrian Inbound Frozen - papan antrean inbound gudang beku",
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",
-    "@capacitor/core": "^8.4.2",
-    "@supabase/realtime-js": "^2.111.0",
-    "@vercel/functions": "^3.7.6",
-    "pg": "^8.16.3"
+    "@capacitor/core": "^8.4.2"
   },
   "scripts": {
-    "build:realtime": "esbuild js/realtime_client_source.js --bundle --minify --platform=browser --format=iife --outfile=js/realtime_client.js",
-    "check": "node --check api/inbound.js && node --check api/sync-superset.js && node --check js/app.js && node --check js/api_v2.js && node --check js/site_config.js && node --check js/dropoff_domain.js && node --check js/supabase_backend.js",
+    "dev": "node scripts/dev-server.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "push": "node scripts/autopush.mjs",
+    "check": "node --check js/app.js && node --check js/api.js && node --check js/config.js && node --check js/format.js && node --check js/sla.js && node --check js/store.js && node --check js/theme.js && node --check js/ui.js && node --check js/pages/board.js && node --check js/pages/register.js && node --check js/pages/report.js && node --check js/pages/settings.js && node --check js/deployment.js",
+    "check:functions": "npx esbuild supabase/functions/_shared/http.ts supabase/functions/inbound-api/index.ts supabase/functions/sync-superset/index.ts supabase/functions/sync-gsheet/index.ts --outdir=.tools/check --format=esm --target=es2022",
     "test": "node --test test/*.test.js",
     "seed:supabase": "node scripts/seed-reference-data.mjs",
     "android:sync": "npx cap sync android",
-    "android:build:debug": "cd android && gradlew.bat assembleDebug",
-    "check:functions": "npx esbuild supabase/functions/_shared/http.ts supabase/functions/inbound-api/index.ts supabase/functions/sync-superset/index.ts supabase/functions/sync-gsheet/index.ts --outdir=.tools/check --format=esm --target=es2022"
+    "android:build:debug": "cd android && gradlew.bat assembleDebug"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
