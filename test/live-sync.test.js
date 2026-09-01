@@ -161,7 +161,7 @@ test("push otomatis menolak berkas yang tampak memuat rahasia", () => {
 
 test("push otomatis menjalankan gerbang mutu sebelum mendorong", () => {
   const push = read("scripts/autopush.mjs");
-  assert.match(push, /runNpm\("run", "check"\)/);
+  assert.match(push, /runNpm\("run check"\)/);
   assert.match(push, /runNpm\("test"\)/);
   // Rebase dahulu supaya commit orang lain tidak tertimpa.
   assert.match(push, /"pull", "--rebase", "origin", BRANCH/);
@@ -177,9 +177,12 @@ test("git dipanggil tanpa shell agar pesan commit tidak terpecah", () => {
     /execFileSync\("git", parameters, \{ stdio: "inherit" \}\)/,
     "git dijalankan langsung, tanpa opsi shell",
   );
+  // npm dijalankan sebagai satu string perintah. Bentuk ini memakai shell
+  // tanpa memicu DEP0190, yang hanya berlaku ketika argumen dikirim terpisah
+  // lalu digabung tanpa di-escape.
   assert.match(
     push,
-    /execFileSync\("npm", parameters, \{ stdio: "inherit", shell: process\.platform === "win32" \}\)/,
-    "npm.cmd justru memerlukan shell di Windows",
+    /execSync\(`npm \$\{script\}`, \{ stdio: "inherit" \}\)/,
+    "npm dijalankan sebagai satu string perintah",
   );
 });

@@ -12,7 +12,7 @@
  * dirinya di keluaran supaya tidak diam-diam menjadi kebiasaan.
  * ========================================================================== */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 
 const args = process.argv.slice(2);
 const skipChecks = args.includes("--skip-checks");
@@ -36,9 +36,16 @@ function runGit(...parameters) {
   execFileSync("git", parameters, { stdio: "inherit" });
 }
 
-/** npm di Windows adalah npm.cmd, yang justru mensyaratkan shell. */
-function runNpm(...parameters) {
-  execFileSync("npm", parameters, { stdio: "inherit", shell: process.platform === "win32" });
+/**
+ * npm di Windows adalah `npm.cmd`, dan Node 24 menolak menjalankan berkas .cmd
+ * tanpa shell (EINVAL). `execSync` dengan SATU string perintah adalah bentuk
+ * yang memang dimaksudkan untuk kasus ini: ia memakai shell tanpa memicu
+ * DEP0190, yang hanya berlaku ketika argumen dikirim terpisah lalu digabung
+ * tanpa di-escape. Perintah di sini seluruhnya literal, tidak ada masukan
+ * pemakai yang ikut.
+ */
+function runNpm(script) {
+  execSync(`npm ${script}`, { stdio: "inherit" });
 }
 
 /* -- 1. Ada yang perlu di-push? -------------------------------------------- */
@@ -84,7 +91,7 @@ if (skipChecks) {
   console.log("  Melewati pemeriksaan atas permintaan (--skip-checks).");
 } else {
   console.log("  Memeriksa sintaks…");
-  runNpm("run", "check");
+  runNpm("run check");
   console.log("  Menjalankan test…");
   runNpm("test");
 }
