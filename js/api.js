@@ -201,17 +201,63 @@ export async function apiPost(action, payload = {}) {
  * Aksi
  * ----------------------------------------------------------------------- */
 
-export async function login(username, password) {
-  const response = await fetch(`${BACKEND_URL}?action=login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const body = await readBody(response);
-  if (!response.ok || body?.ok === false) {
-    throw new ApiError(body?.message || "Username atau password salah.", response.status);
+/**
+ * Menerjemahkan kegagalan login menjadi pesan yang menunjuk penyebab sebenarnya.
+ *
+ * Ini bukan kosmetik. Sebelumnya SETIAP kegagalan berakhir sebagai "Username
+ * atau password salah": ketika proksi menjawab 502 karena layanan API belum
+ * berjalan, badannya berisi HTML, `JSON.parse` gagal, pesannya menjadi
+ * undefined, dan layar menyalahkan sandi operator atas server yang bahkan
+ * tidak menyala. Berjam-jam dapat terbuang mengganti sandi yang sejak awal
+ * sudah benar.
+ */
+function loginFailure(status, body) {
+  // Pesan dari server selalu menang bila ada — ia paling spesifik.
+  if (body?.message) return new ApiError(body.message, status);
+
+  if (status === 401) return new ApiError("Username atau password salah.", status);
+  if (status === 503) {
+    return new ApiError(
+      "Server belum terkonfigurasi: daftar akun atau kunci sesi belum diisi. Hubungi admin.",
+      status,
+    );
   }
+  if (status === 502 || status === 503 || status === 504) {
+    return new ApiError(
+      `Layanan API tidak dapat dihubungi (HTTP ${status}). Aplikasi tampil, tetapi backend-nya belum berjalan.`,
+      status,
+    );
+  }
+  if (status >= 500) {
+    return new ApiError(`Server bermasalah (HTTP ${status}). Coba lagi sebentar.`, status);
+  }
+  // Respons tanpa JSON pada status apa pun berarti yang menjawab bukan API —
+  // biasanya halaman galat milik proxy di depannya.
+  return new ApiError(
+    `Jawaban tidak dikenali dari server (HTTP ${status}). Backend kemungkinan belum siap.`,
+    status,
+  );
+}
+
+export async function login(username, password) {
+  let response;
+  try {
+    response = await fetch(`${BACKEND_URL}?action=login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+  } catch (error) {
+    // Jaringan putus sebelum permintaan sampai; tidak ada status untuk dibaca.
+    throw new ApiError(`Tidak dapat menghubungi server: ${error.message}`, 0);
+  }
+
+  const body = await readBody(response);
+  if (!response.ok || body?.ok === false) throw loginFailure(response.status, body);
+
   const data = body?.data ?? body;
+  if (!data?.token) throw loginFailure(response.status, body);
+
   setSession(data.token, data.user);
   return data.user;
 }

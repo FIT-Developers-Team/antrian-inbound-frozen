@@ -224,3 +224,28 @@ test("git dipanggil tanpa shell agar pesan commit tidak terpecah", () => {
     "npm dijalankan sebagai satu string perintah",
   );
 });
+
+test("kegagalan login menunjuk penyebab sebenarnya, bukan selalu sandi", () => {
+  // Ketika proksi menjawab 502 karena layanan API belum berjalan, badannya
+  // berisi HTML, JSON.parse gagal, dan pesan lama jatuh ke "Username atau
+  // password salah" — menyalahkan sandi operator atas server yang bahkan tidak
+  // menyala. Berjam-jam dapat terbuang mengganti sandi yang sudah benar.
+  const api = read("js/api.js");
+  assert.match(api, /function loginFailure\(status, body\)/);
+  assert.match(api, /status === 502 \|\| status === 503 \|\| status === 504/);
+  assert.match(api, /Layanan API tidak dapat dihubungi/);
+  assert.match(api, /Server belum terkonfigurasi/);
+  assert.match(api, /Tidak dapat menghubungi server/, "kegagalan jaringan juga dibedakan");
+
+  // 401 tetap berbunyi seperti kredensial salah, karena memang itu artinya.
+  assert.match(api, /if \(status === 401\) return new ApiError\("Username atau password salah\."/);
+
+  // Pesan dari server selalu menang bila ada.
+  assert.match(api, /if \(body\?\.message\) return new ApiError\(body\.message, status\)/);
+});
+
+test("token yang hilang tidak diperlakukan sebagai login berhasil", () => {
+  // Respons 200 tanpa token pernah menyimpan sesi kosong dan melempar operator
+  // ke papan yang setiap permintaannya langsung ditolak.
+  assert.match(read("js/api.js"), /if \(!data\?\.token\) throw loginFailure/);
+});
