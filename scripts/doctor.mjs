@@ -59,15 +59,25 @@ console.log("");
 console.log("  Web");
 try {
   const health = await call("/healthz");
-  if (health.status === 200) console.log(ok("Aplikasi hidup dan menyajikan berkas statis."));
-  else {
+  if (health.status === 200) {
+    console.log(ok("Aplikasi hidup dan menyajikan berkas statis."));
+  } else if ([502, 503, 504].includes(health.status)) {
+    // Inilah tampilan "no available server" dari sisi luar: proxy platform
+    // menjawab, tetapi tidak ada kontainer di belakangnya untuk dirutekan.
+    problems += 1;
+    console.log(fail(`Proxy menjawab HTTP ${health.status} — tidak ada kontainer aplikasi yang hidup.`));
+    console.log(info('Inilah yang dilaporkan Coolify sebagai "no available server".'));
+    console.log(info("Kontainer kemungkinan keluar berulang kali. Buka log aplikasi di Coolify;"));
+    console.log(info("baris yang diawali [db] atau [auth] menyebut penyebabnya."));
+    console.log(info("Tersering: DATABASE_URL atau INBOUND_AUTH_SECRET belum diisi."));
+  } else {
     problems += 1;
     console.log(fail(`/healthz mengembalikan HTTP ${health.status}.`));
   }
 } catch (error) {
   problems += 1;
   console.log(fail(`Web tidak dapat dihubungi: ${error.message}`));
-  console.log(info("Jalankan: npm run stack:up"));
+  console.log(info("Periksa domain dan apakah deployment sudah selesai."));
 }
 
 /* -- 2. API + database ----------------------------------------------------- */
@@ -75,10 +85,22 @@ console.log("\n  API & database");
 try {
   const health = await call("/api/inbound?action=health");
   const data = health.body;
-  if (health.status === 502 || health.status === 504) {
+
+  // Masalah yang dilaporkan aplikasi tentang dirinya sendiri selalu
+  // didahulukan: ia menyebut penyebab DAN tindakannya, dan itu jauh lebih
+  // berguna daripada tebakan apa pun dari sisi luar.
+  const reported = Array.isArray(data?.problems) ? data.problems : [];
+
+  if (reported.length) {
+    reported.forEach((problem) => {
+      problems += 1;
+      console.log(fail(`[${problem.area}] ${problem.message}`));
+      if (problem.hint) console.log(info(problem.hint));
+    });
+  } else if ([502, 503, 504].includes(health.status)) {
     problems += 1;
-    console.log(fail("Proxy platform tidak dapat menjangkau aplikasi."));
-    console.log(info("Periksa: docker compose logs app"));
+    console.log(fail(`Proxy menjawab HTTP ${health.status}; aplikasi tidak terjangkau.`));
+    console.log(info("Buka log aplikasi di Coolify untuk melihat penyebabnya."));
   } else if (data?.ok) {
     console.log(ok(`API tersambung ke Postgres — ${data.tickets ?? 0} tiket, gudang aktif ${(data.active_sites || []).join(", ")}.`));
     console.log(info(`Master PO: ${data.po_master_rows ?? 0} baris.`));
@@ -146,7 +168,7 @@ try {
       problems += 1;
       console.log(fail(line));
       console.log(info("Sync seharusnya lima menit sekali. SUPERSET_SESSION_COOKIE kemungkinan kedaluwarsa."));
-      console.log(info("Periksa: docker compose logs api | grep superset"));
+      console.log(info("Periksa log aplikasi di Coolify, cari baris [superset]."));
     } else {
       console.log(ok(line));
     }

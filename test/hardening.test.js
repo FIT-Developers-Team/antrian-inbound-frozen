@@ -18,19 +18,64 @@ const sync = read("api/sync-superset.mjs");
 
 /* -- Keamanan -------------------------------------------------------------- */
 
-test("kunci sesi yang kosong menghentikan start, bukan diam-diam menerima token siapa pun", () => {
+test("kunci sesi yang kosong tidak pernah dapat memvalidasi token siapa pun", () => {
   // `createHmac("sha256", "")` adalah HMAC yang SAH dengan kunci kosong. Tanpa
-  // pemeriksaan ini, INBOUND_AUTH_SECRET yang tidak diset berarti siapa pun
-  // dapat menyusun token berperan DEVELOPER sendiri dan memakainya pada setiap
-  // aksi tulis — tanpa pernah menyentuh layar masuk. Layar login memang menolak
+  // penjaga ini, INBOUND_AUTH_SECRET yang tidak diset berarti siapa pun dapat
+  // menyusun token berperan DEVELOPER sendiri dan memakainya pada setiap aksi
+  // tulis — tanpa pernah menyentuh layar masuk. Layar login memang menolak
   // dengan 503, tetapi jalur pemeriksaan sesi tidak pernah ikut memeriksanya.
   assert.match(server, /function authSecretProblem/);
   assert.match(server, /MIN_SECRET_LENGTH = 16/);
 
-  const start = server.indexOf("async function start()");
-  const body = server.slice(start, server.indexOf("\n}", start));
-  assert.match(body, /authSecretProblem\(\)/, "kunci diperiksa sebelum socket dibuka");
-  assert.match(body, /process\.exit\(1\)/, "kunci yang tidak sah harus menghentikan proses");
+  // Penjaganya ada di readSession, BUKAN di start(). Letak itu yang penting: ia
+  // berlaku pada setiap permintaan, bukan hanya sekali saat proses menyala.
+  const read = server.slice(server.indexOf("function readSession(request)"));
+  const body = read.slice(0, read.indexOf("\n}"));
+  assert.match(body, /if \(authSecretProblem\(\)\) return null;/);
+  assert.ok(
+    body.indexOf("authSecretProblem()") < body.indexOf("constantTimeEqual"),
+    "kunci diperiksa sebelum tanda tangan dibandingkan",
+  );
+});
+
+test("masalah start diumumkan, bukan mematikan kontainer", () => {
+  // Versi sebelumnya memanggil process.exit(1) pada setiap masalah start. Yang
+  // terlihat operator bukan penjelasan, melainkan "no available server" dari
+  // proxy: kontainer keluar, dinyalakan lagi, keluar lagi. Log memuat
+  // jawabannya, tetapi kontainer yang mati sepuluh kali per menit adalah tempat
+  // yang buruk untuk mencarinya.
+  const start = server.slice(
+    server.indexOf("async function start()"),
+    server.indexOf("let backgroundJobsStarted"),
+  );
+  assert.doesNotMatch(start, /process\.exit/, "masalah konfigurasi tidak boleh mematikan proses");
+  assert.match(start, /recordProblem\(/);
+  assert.match(start, /server\.listen\(PORT/, "socket tetap dibuka");
+
+  // Socket dibuka SEBELUM skema diterapkan: halaman yang termuat dan
+  // menjelaskan masalahnya lebih berguna daripada kontainer yang tidak pernah
+  // sempat dijangkau proxy.
+  assert.ok(
+    start.indexOf("server.listen(PORT") < start.indexOf("applySchemaWithRetry"),
+    "socket dibuka sebelum skema diterapkan",
+  );
+
+  // Dan masalahnya harus dapat dibaca dari luar, bukan hanya dari log.
+  assert.match(server, /export function currentProblems/);
+  assert.match(server, /problems: currentProblems\(\)/);
+});
+
+test("skema yang gagal dicoba lagi, bukan menyerah selamanya", () => {
+  // Kegagalan tersering bersifat sementara: Postgres masih membuka diri ketika
+  // aplikasi sudah siap. Percobaan ulang membuat keadaan itu sembuh sendiri
+  // tanpa siapa pun perlu menekan Deploy untuk kedua kalinya.
+  assert.match(server, /async function applySchemaWithRetry/);
+  assert.match(server, /clearProblems\("db"\)/);
+});
+
+test("masalah database dilaporkan apa adanya, bukan sebagai galat generik", () => {
+  assert.match(server, /startupProblems\.find\(\(problem\) => problem\.area === "db"\)/);
+  assert.match(server, /dbProblem\.message/);
 });
 
 test("kunci sesi yang terlalu pendek ditolak sama seperti yang kosong", () => {
@@ -315,6 +360,28 @@ test("sinkronisasi Superset punya batas waktu dan tidak pernah tumpang-tindih", 
   assert.equal((sync.match(/signal: timeoutSignal\(\)/g) || []).length, 3, "setiap fetch harus berbatas waktu");
   assert.match(sync, /if \(running\)/);
   assert.match(sync, /running = false/);
+});
+
+test("setiap view dijatuhkan sebelum dibuat ulang", () => {
+  // Inilah bug yang membuat deployment pertama gagal dengan "no available
+  // server", dan ia lolos dari SELURUH pengujian karena setiap uji skema
+  // dijalankan di database baru.
+  //
+  // `create or replace view` hanya boleh mengganti isi kueri; ia menolak
+  // mengubah tipe atau susunan kolom. Di database kosong view dibuat baru dan
+  // semuanya lancar. Di database yang sudah berisi versi lama, Postgres
+  // menjawab "cannot change data type of view column" — skema berhenti,
+  // kontainer keluar, dan proxy melaporkan kalimat yang tidak menyebut satu pun
+  // penyebabnya.
+  const views = [...sql.matchAll(/create or replace view (\w+)/g)].map((match) => match[1]);
+  assert.ok(views.length > 0, "skema memang punya view");
+
+  views.forEach((view) => {
+    const dropAt = sql.indexOf(`drop view if exists ${view};`);
+    const createAt = sql.indexOf(`create or replace view ${view}`);
+    assert.ok(dropAt >= 0, `${view} harus dijatuhkan lebih dulu agar skema dapat naik versi`);
+    assert.ok(dropAt < createAt, `drop untuk ${view} harus mendahului create`);
+  });
 });
 
 test("fungsi SLA dapat disisipkan Postgres ke kueri pemanggilnya", () => {

@@ -126,6 +126,16 @@ function signSession(session) {
 }
 
 function readSession(request) {
+  // PENJAGA INI YANG MEMBUAT APLIKASI AMAN DINYALAKAN TANPA KUNCI.
+  //
+  // `createHmac("sha256", "")` adalah HMAC yang sah dengan kunci kosong, jadi
+  // tanpa baris ini token yang ditandatangani kunci kosong akan lolos —
+  // termasuk token berperan DEVELOPER yang disusun sendiri oleh siapa pun.
+  // Dengan baris ini, kunci yang tidak sah berarti TIDAK ADA sesi yang dapat
+  // diterima sama sekali: aplikasi menyala, menjelaskan masalahnya, dan tetap
+  // tidak dapat dimasuki.
+  if (authSecretProblem()) return null;
+
   const token = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "");
   const [encoded, signature] = token.split(".");
   if (!encoded || !signature || !constantTimeEqual(signature, sign(encoded))) return null;
@@ -412,8 +422,23 @@ async function handle(request, response) {
         { "retry-after": String(limited.retryAfterSeconds) },
       );
     }
-    if (action === "health") return send(response, 200, { ok: true, ...(await rpc("inbound_health")) });
-    return send(response, 200, { ok: true, data: authStatus() });
+    if (action === "health") {
+      const problems = currentProblems();
+      // Database yang tidak dapat dihubungi tidak boleh membuat endpoint ini
+      // ikut gagal — justru di saat itulah ia paling dibutuhkan.
+      let details = null;
+      try {
+        details = await rpc("inbound_health");
+      } catch (error) {
+        problems.push({
+          area: "db",
+          message: `Database tidak dapat dikueri: ${error.message}`,
+          hint: "Periksa DATABASE_URL dan apakah layanan Postgres hidup.",
+        });
+      }
+      return send(response, 200, { ok: problems.length === 0, problems, ...(details || {}) });
+    }
+    return send(response, 200, { ok: true, data: { ...authStatus(), problems: currentProblems() } });
   }
 
   if (request.method === "POST" && action === "login") {
@@ -473,6 +498,18 @@ async function handle(request, response) {
   if (!canUseAction(session, action)) {
     return send(response, 401, { ok: false, message: "Unauthorized" });
   }
+  // Masalah database yang belum beres dilaporkan apa adanya, sekali di sini.
+  // Tanpa ini setiap aksi gagal dengan "Kesalahan server" generik — benar
+  // secara teknis, dan tidak berguna sama sekali bagi orang yang harus
+  // memperbaikinya pada Senin pagi.
+  const dbProblem = startupProblems.find((problem) => problem.area === "db");
+  if (dbProblem) {
+    return send(response, 503, {
+      ok: false,
+      message: `${dbProblem.message} ${dbProblem.hint}`.trim(),
+    });
+  }
+
   const site = String(url.searchParams.get("site") || body.site_code || "").toUpperCase() || null;
   const actor = { role: session.role, name: session.display_name };
 
@@ -602,29 +639,124 @@ server.headersTimeout = 20_000;
 // menutup lebih dulu dan bukan server — race itulah yang memunculkan 502 acak.
 server.keepAliveTimeout = 72_000;
 
+/**
+ * Masalah yang ditemukan saat start dan belum teratasi.
+ *
+ * SERVER TETAP MENYALA MESKIPUN DAFTAR INI TIDAK KOSONG, dan itu keputusan yang
+ * dibayar mahal untuk dipelajari.
+ *
+ * Versi sebelumnya memanggil `process.exit(1)` pada setiap masalah start:
+ * DATABASE_URL kosong, kunci sesi kosong, skema gagal diterapkan. Niatnya baik
+ * — gagal terang-terangan lebih baik daripada berjalan setengah rusak. Yang
+ * sebenarnya terjadi tidak terang sama sekali: kontainer keluar, platform
+ * menyalakannya lagi, ia keluar lagi, dan satu-satunya yang terlihat siapa pun
+ * adalah "no available server" dari proxy — kalimat yang tidak menyebut
+ * DATABASE_URL, tidak menyebut kunci sesi, dan tidak menyebut baris SQL yang
+ * gagal. Log kontainer memuat jawabannya, tetapi kontainer yang mati sepuluh
+ * kali per menit adalah tempat yang buruk untuk mencari.
+ *
+ * Menyala dengan masalah yang DIUMUMKAN lebih baik daripada tidak menyala sama
+ * sekali: halaman termuat, layar masuk menjelaskan persoalannya dengan kalimat
+ * yang dapat ditindaklanjuti, `npm run doctor` menyebutkannya, dan proxy punya
+ * sesuatu untuk dirutekan.
+ *
+ * Yang membuat ini aman adalah readSession(): tanpa kunci yang sah ia menolak
+ * SETIAP token, jadi aplikasi yang menyala tanpa kunci tidak dapat dimasuki
+ * siapa pun — bukan hanya sulit dimasuki.
+ */
+const startupProblems = [];
+
+export function currentProblems() {
+  return startupProblems.map(({ area, message, hint }) => ({ area, message, hint }));
+}
+
+function recordProblem(area, message, hint = "") {
+  startupProblems.push({ area, message, hint });
+  console.error(`[${area}] ${message}`);
+  if (hint) console.error(`[${area}] ${hint}`);
+}
+
+function clearProblems(area) {
+  for (let index = startupProblems.length - 1; index >= 0; index -= 1) {
+    if (startupProblems[index].area === area) startupProblems.splice(index, 1);
+  }
+}
+
+/**
+ * Menerapkan skema, dan bila gagal, mencoba lagi alih-alih menyerah.
+ *
+ * Kegagalan tersering di sini bersifat sementara: Postgres masih membuka diri
+ * ketika aplikasi sudah siap. Compose menunggu healthcheck, tetapi tidak setiap
+ * platform melakukannya. Percobaan ulang berkala membuat keadaan itu sembuh
+ * sendiri tanpa siapa pun perlu menekan Deploy untuk kedua kalinya.
+ */
+async function applySchemaWithRetry() {
+  try {
+    await applySchema();
+    clearProblems("db");
+    return true;
+  } catch (error) {
+    recordProblem(
+      "db",
+      `Skema gagal diterapkan: ${error.message}`,
+      "Aplikasi tetap menyala, tetapi papan antrean tidak akan memuat sampai ini beres.",
+    );
+    return false;
+  }
+}
+
 async function start() {
   if (!process.env.DATABASE_URL) {
-    console.error("DATABASE_URL belum diset.");
-    process.exit(1);
+    recordProblem(
+      "db",
+      "DATABASE_URL belum diset, jadi tidak ada database yang dapat dihubungi.",
+      "Isi DATABASE_URL di setelan lingkungan, lalu deploy ulang.",
+    );
   }
 
-  // Kunci sesi diperiksa SEBELUM socket dibuka, bukan saat login pertama.
-  // Aplikasi yang menyala dengan kunci kosong menerima token sesi yang
-  // ditandatangani siapa pun; lebih baik tidak menyala sama sekali.
   const secretProblem = authSecretProblem();
   if (secretProblem) {
-    console.error(`[auth] ${secretProblem}`);
-    console.error("[auth] Buat satu dengan: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"");
-    process.exit(1);
+    recordProblem(
+      "auth",
+      secretProblem,
+      "Buat satu dengan: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+    );
   }
 
-  await applySchema();
+  // Socket dibuka LEBIH DULU. Halaman yang termuat dan menjelaskan masalahnya
+  // jauh lebih berguna daripada kontainer yang tidak pernah sempat dijangkau.
+  await new Promise((resolve) => server.listen(PORT, resolve));
+  console.log(`[api] mendengarkan di :${PORT}`);
 
+  if (!process.env.DATABASE_URL) {
+    console.error("[api] berjalan dalam keadaan rusak — lihat pesan di atas.");
+    return;
+  }
+
+  const ready = await applySchemaWithRetry();
+  if (!ready) {
+    const timer = setInterval(async () => {
+      if (await applySchemaWithRetry()) {
+        clearInterval(timer);
+        console.log("[db] skema akhirnya berhasil diterapkan.");
+        startBackgroundJobs();
+      }
+    }, 30_000);
+    timer.unref?.();
+    return;
+  }
+
+  startBackgroundJobs();
+}
+
+let backgroundJobsStarted = false;
+
+async function startBackgroundJobs() {
+  if (backgroundJobsStarted) return;
+  backgroundJobsStarted = true;
   const { startSupersetSync } = await import("./sync-superset.mjs");
   startSupersetSync(pool);
   startHistoryPruning();
-
-  server.listen(PORT, () => console.log(`[api] mendengarkan di :${PORT}`));
 }
 
 /**
@@ -661,6 +793,10 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
 start().catch((error) => {
+  // Hanya kegagalan yang benar-benar tidak terduga yang sampai ke sini —
+  // masalah konfigurasi dan skema sudah ditangani sebagai startupProblems di
+  // atas. Bila socket bahkan tidak dapat dibuka, tidak ada yang berguna untuk
+  // disajikan dan keluar adalah jawaban yang benar.
   console.error("[api] gagal start", error);
   process.exit(1);
 });

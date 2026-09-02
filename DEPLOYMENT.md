@@ -12,11 +12,22 @@ pembaruan berikutnya.
 
 ## Prasyarat
 
-| Kebutuhan            | Verifikasi              |
-| -------------------- | ----------------------- |
-| Server Coolify       | Sudah terpasang         |
-| Docker + Compose     | Disediakan Coolify      |
-| Node 22+ (lokal saja)| `node --version`        |
+| Kebutuhan             | Di mana                 | Verifikasi         |
+| --------------------- | ----------------------- | ------------------ |
+| Server Coolify        | Server Anda             | Sudah terpasang    |
+| Docker + Compose      | Server Anda             | Disediakan Coolify |
+| Node 22+              | Mesin Anda              | `node --version`   |
+| Git                   | Mesin Anda              | `git --version`    |
+
+**Docker Desktop TIDAK diperlukan di mesin Anda.** Coolify menarik kode dari
+GitHub lalu membangun image di servernya sendiri; mesin Anda hanya perlu
+mendorong commit. Yang dibutuhkan secara lokal hanyalah Node — dan itu pun hanya
+untuk menjalankan `npm test` serta `npm run doctor`, yang keduanya berbicara
+lewat HTTP biasa.
+
+Docker di mesin Anda hanya relevan bila ingin menjalankan seluruh tumpukan
+secara lokal (`npm run stack:up`). Itu opsional, dan bukan bagian dari alur
+deploy.
 
 Tidak ada layanan berbayar dan tidak ada tier percobaan. Postgres dan Node
 berjalan di server Anda sendiri.
@@ -182,22 +193,57 @@ API membedakan keduanya di tingkat HTTP: **401** berarti kredensial salah,
 **503** berarti konfigurasi server bermasalah, **429** berarti terlalu banyak
 percobaan dari alamat atau akun yang sama.
 
-### Kontainer menolak start
+### Kunci sesi belum diisi
 
 Bila `INBOUND_AUTH_SECRET` kosong atau lebih pendek dari 16 karakter, aplikasi
-**berhenti sebelum membuka port** dan menulis alasannya ke log.
+**tetap menyala** — halaman termuat seperti biasa — tetapi setiap login ditolak
+dengan pesan yang menyebutkan persis hal itu, dan tidak ada satu pun token sesi
+yang dapat diterima.
 
-Itu disengaja. `createHmac("sha256", "")` adalah HMAC yang sah dengan kunci
-kosong: aplikasi yang menyala tanpa kunci menerima token sesi yang dapat disusun
-siapa pun, berperan apa pun, tanpa pernah menyentuh layar masuk. Aplikasi yang
-tidak menyala jauh lebih mudah disadari daripada aplikasi yang menyala tanpa
-kunci.
+Yang terakhir itu penting. `createHmac("sha256", "")` adalah HMAC yang sah
+dengan kunci kosong, jadi tanpa penjaga khusus aplikasi tanpa kunci akan
+menerima token yang disusun siapa pun, berperan apa pun. Penjaganya ada di jalur
+pemeriksaan sesi: tanpa kunci yang sah, **semua** token ditolak. Aplikasi menyala,
+menjelaskan masalahnya, dan tetap tidak dapat dimasuki.
 
 Buat kuncinya dengan:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
+
+---
+
+## Ketika Coolify bilang "no available server"
+
+Pesan itu datang dari proxy Coolify, bukan dari aplikasi. Artinya selalu sama:
+**proxy hidup, tetapi tidak ada kontainer aplikasi yang dapat dirutekan.**
+
+Aplikasi ini dirancang agar hal itu tidak terjadi karena salah konfigurasi.
+DATABASE_URL yang kosong, kunci sesi yang belum diisi, atau skema yang gagal
+diterapkan tidak lagi mematikan kontainer: ia tetap menyala, menyajikan halaman,
+dan melaporkan masalahnya. Jadi bila pesan ini muncul, penyebabnya ada di luar
+daftar itu.
+
+Periksa berurutan:
+
+| Kemungkinan                              | Cara memastikan                                            |
+| ---------------------------------------- | ---------------------------------------------------------- |
+| Build gagal, tidak ada image baru        | Tab **Deployments** di Coolify — cari langkah yang merah   |
+| Kontainer keluar berulang                | Tab **Logs** — baris `[db]` atau `[auth]` menyebut sebabnya |
+| Port salah                               | Coolify harus merutekan ke **3000** (sesuai `EXPOSE`)      |
+| Domain belum menunjuk ke aplikasi ini    | Setelan domain aplikasi di Coolify                          |
+| Deployment masih berjalan                | Tunggu sampai selesai, lalu muat ulang                      |
+
+Lalu jalankan diagnostik dari mesin Anda — tanpa Docker, hanya HTTP:
+
+```bash
+INBOUND_URL=https://antrian.inbound-frozen.astrofit.web.id npm run doctor
+```
+
+`doctor` mengenali pesan ini dan menyebutkan langkah berikutnya. Bila aplikasinya
+hidup tetapi ada yang salah, ia mencetak masalah yang dilaporkan aplikasi
+tentang dirinya sendiri — lengkap dengan tindakan yang harus diambil.
 
 ---
 

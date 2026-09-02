@@ -350,6 +350,29 @@ $$;
 -- membuat setiap penyaringan tanggal di atas view berjalan pada ekspresi, bukan
 -- pada kolom, sehingga tickets_board_idx tidak pernah terpakai. JSON yang
 -- dihasilkan tetap sama persis: to_jsonb(date) menghasilkan "YYYY-MM-DD".
+--
+-- VIEW DIJATUHKAN LEBIH DULU, DAN ITU WAJIB.
+--
+-- `create or replace view` menolak mengubah tipe atau susunan kolom: ia hanya
+-- boleh mengganti isi kueri. Persis itulah yang membuat deployment pertama
+-- gagal — di database kosong view ini dibuat baru dan semuanya lancar, tetapi
+-- di database yang sudah berisi view versi lama (dengan operational_date
+-- bertipe text) Postgres menjawab:
+--
+--   ERROR: cannot change data type of view column "operational_date"
+--
+-- Skema berhenti di situ, kontainer keluar, dan yang terlihat operator hanyalah
+-- "no available server" dari proxy — pesan yang tidak menyebut satu pun kata
+-- tentang penyebabnya.
+--
+-- `drop view if exists` membuat berkas ini tetap dapat diterapkan pada database
+-- versi mana pun, bukan hanya pada database yang kebetulan sudah cocok. Tanpa
+-- `cascade` dengan sengaja: bila kelak ada objek yang benar-benar bergantung
+-- pada view ini, lebih baik gagal terang-terangan daripada menghapusnya diam-
+-- diam. Saat ini tidak ada — kedua fungsi yang memakainya menyebutnya dari
+-- dalam badan fungsi, dan Postgres tidak mencatat itu sebagai ketergantungan.
+drop view if exists inbound_board;
+
 create or replace view inbound_board as
 select
   t.ticket_id, t.queue_no, t.ticket_type, t.status, t.site_code,
