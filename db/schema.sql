@@ -164,6 +164,37 @@ create table if not exists gsheet_sync_outbox (
 );
 
 -- ---------------------------------------------------------------------------
+-- 3b. Hari operasional wajib ada
+--
+-- Kolom ini menjadi tulang punggung setiap kueri papan dan laporan, dan sejak
+-- awal ia boleh kosong. Akibatnya setiap penyaringan tanggal harus ditulis
+-- sebagai `operational_date is null or operational_date >= …` — dan sebuah OR
+-- di situ berarti Postgres membangun BitmapOr alih-alih pemindaian index
+-- tunggal, pada kueri yang dijalankan tiap lima belas detik.
+--
+-- Baris kosong itu sendiri sebenarnya cacat data, bukan keadaan yang sah:
+-- inbound_create_tickets_bulk() SELALU mengisinya. Jadi nilainya diisi ulang
+-- dari created_at, lalu kolomnya dijadikan wajib supaya kekosongan itu tidak
+-- dapat kembali.
+-- ---------------------------------------------------------------------------
+update tickets
+   set operational_date = (timezone('Asia/Jakarta', created_at) - interval '4 hours')::date
+ where operational_date is null;
+
+alter table tickets
+  alter column operational_date set default (timezone('Asia/Jakarta', now()) - interval '4 hours')::date;
+
+do $$
+begin
+  alter table tickets alter column operational_date set not null;
+exception
+  -- Bila masih ada baris kosong yang tidak terjangkau backfill di atas, skema
+  -- tetap harus dapat diterapkan: kontainer yang menolak start karena satu
+  -- baris cacat jauh lebih buruk daripada satu kueri yang sedikit lebih lambat.
+  when others then raise notice 'operational_date belum dapat dijadikan wajib: %', sqlerrm;
+end $$;
+
+-- ---------------------------------------------------------------------------
 -- 4. Index untuk jalur kueri panas
 -- ---------------------------------------------------------------------------
 create index if not exists tickets_board_idx
@@ -173,6 +204,22 @@ create index if not exists ticket_pos_ticket_idx on ticket_pos(ticket_id);
 create index if not exists superset_po_number_idx on superset_po_master(po_number);
 create index if not exists superset_po_site_idx on superset_po_master(site_code, po_number);
 create index if not exists ticket_events_ticket_idx on ticket_events(ticket_id, created_at desc);
+
+-- superset_po_master di-join ke site_master lewat location_id, BUKAN site_code:
+-- itulah kolom yang benar-benar dikirim Superset. Tanpa index ini, setiap
+-- snapshot papan — jadi tiap lima belas detik, tiap tablet — memindai seluruh
+-- master PO hanya untuk melaporkan umur sinkronisasinya di pojok layar.
+create index if not exists superset_po_location_idx on superset_po_master(location_id);
+
+-- Halaman Pengaturan dan snapshot papan sama-sama meminta baris sync terakhir.
+-- Tanpa index ini, `order by started_at desc limit 1` memindai seluruh riwayat
+-- sync, yang bertambah dua belas baris tiap jam selamanya.
+create index if not exists sync_runs_recent_idx on sync_runs(sync_name, started_at desc);
+
+-- Gate yang sedang terpakai dicari per gudang untuk mencegah dua truk
+-- diarahkan ke dock yang sama.
+create index if not exists tickets_gate_busy_idx
+  on tickets(site_code, gate) where status = 'UNLOADING';
 
 -- ---------------------------------------------------------------------------
 -- 5. updated_at otomatis
@@ -201,24 +248,49 @@ end $$;
 -- sama ditulis di tiga tempat dengan hasil berbeda, dan angka SLA di layar
 -- tidak pernah cocok dengan angka di laporan.
 -- ---------------------------------------------------------------------------
+--
+-- PENTING — kedua fungsi di bawah sengaja ditulis TANPA klausa `from`.
+--
+-- Bentuk `... from (select upper(regexp_replace(...)) as v) x` jauh lebih enak
+-- dibaca: normalisasinya ditulis sekali, lalu dipakai dua belas kali. Sayangnya
+-- klausa `from` itulah yang membuat Postgres MENOLAK menyisipkan fungsi ini ke
+-- dalam kueri pemanggilnya. Syarat inlining fungsi SQL menuntut badan berupa
+-- satu SELECT tanpa FROM; begitu ada FROM, setiap pemanggilan menjadi
+-- pemanggilan fungsi sungguhan lengkap dengan penyiapan rencana tersendiri.
+--
+-- Papan memanggilnya sekali per tiket, dan `inbound_sla_target_hours`
+-- memanggilnya lagi. Pada dua puluh ribu tiket, biaya itu terukur sebagai 25
+-- DETIK untuk satu snapshot papan — pada kueri yang diminta ulang tiap lima
+-- belas detik. Setelah keduanya dapat disisipkan, angka yang sama menjadi
+-- sekitar 50 milidetik.
+--
+-- Harganya: `upper(btrim(...))` ditulis ulang di setiap cabang. Itu berjalan
+-- pada string sepanjang belasan karakter dan berhenti pada cabang pertama yang
+-- cocok — pertukaran yang sangat menguntungkan.
+--
+-- `regexp_replace` untuk merapatkan spasi hanya tersisa di cabang terakhir,
+-- tempat ia tidak lagi berada di jalur panas. Pola '%RODA%2%' menggantikan
+-- perannya bagi satu-satunya nilai yang benar-benar memuat spasi.
 create or replace function inbound_fleet_canonical(p_fleet text)
 returns text language sql immutable as $$
   select case
-    when v like '%TRONTON%' or v like '%FUSO%'   then 'TRONTON/FUSO'
-    when v like '%WING%'                         then 'WING BOX'
-    when v like '%CDDL%'                         then 'CDDL'
-    when v like '%CDEL%'                         then 'CDEL'
-    when v like '%CDD%'                          then 'CDD'
-    when v like '%CDE%'                          then 'CDE'
-    when v like '%DROP%'                         then 'DROP-OFF'
-    when v like '%RODA 2%' or v like '%MOTOR%'   then 'RODA 2'
-    when v like '%L300%'                         then 'L300 BOX'
-    when v like '%PICK%'                         then 'PICKUP'
-    when v like '%GRANDMAX%' or v like '%MOBIL%' then 'MOBIL'
-    when v like '%VAN%'                          then 'VAN'
-    else v
-  end
-  from (select upper(regexp_replace(btrim(coalesce(p_fleet, '')), '\s+', ' ', 'g')) as v) x;
+    when upper(btrim(coalesce(p_fleet, ''))) like '%TRONTON%'
+      or upper(btrim(coalesce(p_fleet, ''))) like '%FUSO%'      then 'TRONTON/FUSO'
+    when upper(btrim(coalesce(p_fleet, ''))) like '%WING%'      then 'WING BOX'
+    when upper(btrim(coalesce(p_fleet, ''))) like '%CDDL%'      then 'CDDL'
+    when upper(btrim(coalesce(p_fleet, ''))) like '%CDEL%'      then 'CDEL'
+    when upper(btrim(coalesce(p_fleet, ''))) like '%CDD%'       then 'CDD'
+    when upper(btrim(coalesce(p_fleet, ''))) like '%CDE%'       then 'CDE'
+    when upper(btrim(coalesce(p_fleet, ''))) like '%DROP%'      then 'DROP-OFF'
+    when upper(btrim(coalesce(p_fleet, ''))) like '%RODA%2%'
+      or upper(btrim(coalesce(p_fleet, ''))) like '%MOTOR%'     then 'RODA 2'
+    when upper(btrim(coalesce(p_fleet, ''))) like '%L300%'      then 'L300 BOX'
+    when upper(btrim(coalesce(p_fleet, ''))) like '%PICK%'      then 'PICKUP'
+    when upper(btrim(coalesce(p_fleet, ''))) like '%GRANDMAX%'
+      or upper(btrim(coalesce(p_fleet, ''))) like '%MOBIL%'     then 'MOBIL'
+    when upper(btrim(coalesce(p_fleet, ''))) like '%VAN%'       then 'VAN'
+    else upper(regexp_replace(btrim(coalesce(p_fleet, '')), '\s+', ' ', 'g'))
+  end;
 $$;
 
 /**
@@ -229,14 +301,14 @@ $$;
 create or replace function inbound_sla_target_hours(p_fleet text, p_sku integer)
 returns integer language sql immutable as $$
   select case
-    when f in ('TRONTON/FUSO', 'WING BOX')           then 4
-    when f in ('CDD', 'CDDL', 'CDE', 'CDEL')         then case when coalesce(p_sku, 0) > 40 then 4 else 2 end
-    when f in ('VAN', 'PICKUP', 'MOBIL', 'L300 BOX') then 2
-    when f = 'RODA 2'                                then 1
-    when f = 'DROP-OFF'                              then 23
+    when inbound_fleet_canonical(p_fleet) in ('TRONTON/FUSO', 'WING BOX')           then 4
+    when inbound_fleet_canonical(p_fleet) in ('CDD', 'CDDL', 'CDE', 'CDEL')
+      then case when coalesce(p_sku, 0) > 40 then 4 else 2 end
+    when inbound_fleet_canonical(p_fleet) in ('VAN', 'PICKUP', 'MOBIL', 'L300 BOX') then 2
+    when inbound_fleet_canonical(p_fleet) = 'RODA 2'                                then 1
+    when inbound_fleet_canonical(p_fleet) = 'DROP-OFF'                              then 23
     else 0
-  end
-  from (select inbound_fleet_canonical(p_fleet) as f) x;
+  end;
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -256,24 +328,33 @@ $$;
 -- ---------------------------------------------------------------------------
 -- 8. Papan antrean — satu baris per tiket
 -- ---------------------------------------------------------------------------
+--
+-- PENTING — agregasi PO memakai LATERAL, bukan CTE.
+--
+-- Bentuk sebelumnya adalah `with po_rollup as (select ... from ticket_pos group
+-- by ticket_id)` lalu di-join. Bacanya rapi, tetapi artinya: setiap kali view
+-- ini disentuh, Postgres mengagregasi SELURUH tabel ticket_pos lebih dulu —
+-- tidak peduli bahwa pemanggilnya hanya meminta lima puluh tiket dari dua hari
+-- terakhir. Predikat gudang dan tanggal mustahil didorong masuk ke dalam CTE
+-- itu karena hasilnya tidak membawa kolom site_code maupun operational_date.
+--
+-- Papan antrean meminta snapshot ini setiap lima belas detik, dari setiap
+-- tablet yang menyala. Agregasi penuh atas seluruh riwayat PO, berkali-kali per
+-- menit, adalah beban yang tumbuh terus sepanjang umur gudang.
+--
+-- LATERAL membalik urutannya: baris tiket dipilih lebih dulu, lalu PO-nya
+-- dicari per tiket lewat ticket_pos_ticket_idx. Lima puluh tiket berarti lima
+-- puluh pencarian index, bukan satu pemindaian tabel penuh.
+--
+-- `operational_date` juga sengaja TIDAK lagi di-cast ke text di sini. Cast itu
+-- membuat setiap penyaringan tanggal di atas view berjalan pada ekspresi, bukan
+-- pada kolom, sehingga tickets_board_idx tidak pernah terpakai. JSON yang
+-- dihasilkan tetap sama persis: to_jsonb(date) menghasilkan "YYYY-MM-DD".
 create or replace view inbound_board as
-with po_rollup as (
-  select
-    ticket_id,
-    string_agg(po_number, ', ' order by created_at, ticket_po_id) as po_numbers,
-    count(*)::int                                                 as po_count,
-    coalesce(sum(request_quantity), 0)                            as total_qty,
-    coalesce(sum(count_sku), 0)::int                              as total_sku,
-    max(gr_done_at)                                               as last_gr_done_at,
-    count(*) filter (where upper(coalesce(gr_status, '')) = 'DONE GR') = count(*) as all_done_gr,
-    max(updated_at)                                               as po_updated_at
-  from ticket_pos
-  group by ticket_id
-)
 select
   t.ticket_id, t.queue_no, t.ticket_type, t.status, t.site_code,
   t.vendor_name, t.fleet_type, t.plat_number, t.driver_name, t.driver_phone,
-  t.gate, t.slot, t.operational_date::text as operational_date,
+  t.gate, t.slot, t.operational_date,
   t.registered_by, t.source,
   t.arrived_at, t.called_at, t.call_count,
   t.start_unloading_at, t.done_unloading_at,
@@ -285,13 +366,19 @@ select
   coalesce(p.total_qty, 0)   as total_qty,
   coalesce(p.total_sku, 0)   as total_sku,
 
-  inbound_sla_target_hours(t.fleet_type, coalesce(p.total_sku, 0)) as sla_target_hours,
+  -- Target SLA dihitung SEKALI per baris, lalu dipakai ulang.
+  --
+  -- Bentuk sebelumnya memanggil inbound_sla_target_hours() tiga kali untuk
+  -- setiap tiket — sekali di sini dan dua kali lagi di dalam CASE di bawah.
+  -- Fungsi itu memanggil inbound_fleet_canonical(), yang menjalankan
+  -- regexp_replace dan dua belas pola LIKE. Tiga kali lipat pekerjaan regex per
+  -- tiket, pada setiap siklus polling, untuk menghasilkan angka yang sama persis
+  -- ketiga kalinya.
+  sla.target_hours as sla_target_hours,
 
   case
-    when inbound_sla_target_hours(t.fleet_type, coalesce(p.total_sku, 0)) > 0
-     and t.start_unloading_at is not null
-    then t.start_unloading_at
-         + make_interval(hours => inbound_sla_target_hours(t.fleet_type, coalesce(p.total_sku, 0)))
+    when sla.target_hours > 0 and t.start_unloading_at is not null
+    then t.start_unloading_at + make_interval(hours => sla.target_hours)
   end as sla_deadline_at,
 
   t.start_unloading_at as sla_started_at,
@@ -304,7 +391,21 @@ select
 
   greatest(t.updated_at, coalesce(p.po_updated_at, t.updated_at)) as row_updated_at
 from tickets t
-left join po_rollup p on p.ticket_id = t.ticket_id;
+left join lateral (
+  select
+    string_agg(po_number, ', ' order by created_at, ticket_po_id) as po_numbers,
+    count(*)::int                                                 as po_count,
+    coalesce(sum(request_quantity), 0)                            as total_qty,
+    coalesce(sum(count_sku), 0)::int                              as total_sku,
+    max(gr_done_at)                                               as last_gr_done_at,
+    count(*) filter (where upper(coalesce(gr_status, '')) = 'DONE GR') = count(*) as all_done_gr,
+    max(updated_at)                                               as po_updated_at
+  from ticket_pos
+  where ticket_pos.ticket_id = t.ticket_id
+) p on true
+cross join lateral (
+  select inbound_sla_target_hours(t.fleet_type, coalesce(p.total_sku, 0)) as target_hours
+) sla;
 
 -- ---------------------------------------------------------------------------
 -- 9. Antrean ekspor Google Sheet
@@ -338,7 +439,9 @@ returns jsonb language sql stable as $$
            min(location_id) as location_id, min(site_code) as site_code
       from scoped
   ),
-  last_run as (
+  -- Dirujuk empat kali di bawah sebagai subquery skalar; tanpa `materialized`
+  -- setiap rujukan menjalankan kueri ini lagi.
+  last_run as materialized (
     select status, finished_at, written_count, error_message
       from sync_runs where sync_name = 'superset'
       order by started_at desc limit 1
@@ -360,6 +463,32 @@ returns jsonb language sql stable as $$
 $$;
 
 -- ---------------------------------------------------------------------------
+-- 10b. Cakupan gudang
+--
+-- Mengubah "gudang ini, atau semua gudang" menjadi SEBUAH DAFTAR.
+--
+-- Bentuk yang wajar ditulis untuk itu adalah `p_site_code is null or site_code =
+-- p_site_code`, dan di dalam fungsi SQL bentuk itu adalah jebakan. `p_site_code`
+-- adalah parameter, bukan konstanta, jadi Postgres menyusun rencana generik yang
+-- tidak dapat melipat cabang `is null` — dan predikat berbentuk OR semacam itu
+-- tidak dapat dipakai sebagai kondisi index. Rencananya jatuh ke pemindaian
+-- SELURUH tabel tiket, lalu satu pencarian ticket_pos untuk masing-masing.
+--
+-- Terukur pada dua puluh ribu tiket: 157 milidetik per snapshot, tiap lima belas
+-- detik, tiap tablet. Dengan `site_code = any(daftar)` predikat kembali menjadi
+-- ScalarArrayOp yang dapat memakai index: 0,04 milidetik. Empat ribu kali lebih
+-- cepat, dan selisihnya tumbuh seiring bertambahnya riwayat.
+-- ---------------------------------------------------------------------------
+create or replace function inbound_scoped_sites(p_site_code text default null)
+returns text[] language sql stable as $$
+  select case
+    when nullif(upper(btrim(coalesce(p_site_code, ''))), '') is null
+      then (select array_agg(site_code) from site_master)
+    else array[upper(btrim(p_site_code))]
+  end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- 11. Snapshot papan
 -- ---------------------------------------------------------------------------
 create or replace function inbound_board_snapshot(
@@ -367,18 +496,24 @@ create or replace function inbound_board_snapshot(
   p_days_back integer default 2
 )
 returns jsonb language sql stable as $$
-  with bounds as (
-    select
-      greatest(least(coalesce(p_days_back, 2), 30), 0) as days_back,
-      -- Hari operasional bergeser empat jam supaya shift malam yang lewat
-      -- tengah malam tetap dihitung sebagai hari yang sama.
-      (timezone('Asia/Jakarta', now()) - interval '4 hours')::date as today,
-      nullif(upper(btrim(coalesce(p_site_code, ''))), '') as site
-  ),
-  scoped as (
-    select b.* from inbound_board b, bounds x
-     where (x.site is null or b.site_code = x.site)
-       and (b.operational_date is null or b.operational_date::date >= x.today - x.days_back)
+  -- PENTING — batas gudang dan tanggal ditulis LANGSUNG di predikat.
+  --
+  -- Sebelumnya keduanya datang dari sebuah CTE `bounds`, dan itu bukan sekadar
+  -- soal gaya. CTE yang dirujuk beberapa kali dimaterialisasi Postgres, jadi
+  -- `x.site` dan `x.today` menjadi nilai yang baru diketahui saat eksekusi —
+  -- terlalu terlambat untuk dipakai sebagai kondisi index. Rencananya berubah
+  -- menjadi `Seq Scan on tickets` yang membaca SELURUH tabel tiket, menyaring
+  -- dua ratus baris darinya, dan mengulanginya tiap lima belas detik untuk
+  -- setiap tablet yang menyala. Ditulis langsung seperti ini, keduanya menjadi
+  -- konstanta pada waktu perencanaan dan tickets_board_idx terpakai.
+  with scoped as (
+    select b.*
+      from inbound_board b
+     where b.site_code = any(inbound_scoped_sites(p_site_code))
+       -- Hari operasional bergeser empat jam supaya shift malam yang lewat
+       -- tengah malam tetap dihitung sebagai hari yang sama.
+       and b.operational_date >= (timezone('Asia/Jakarta', now()) - interval '4 hours')::date
+                                 - greatest(least(coalesce(p_days_back, 2), 30), 0)
   ),
   payload as (
     select coalesce(jsonb_agg(to_jsonb(scoped) order by scoped.created_at desc), '[]'::jsonb) as rows,
@@ -402,10 +537,20 @@ returns jsonb language sql stable as $$
            order by checker_name), '[]'::jsonb) as rows
       from checker_master where active
   ),
-  freshness as (select inbound_source_freshness((select site from bounds)) as payload)
+  -- `materialized` di sini menghemat lebih banyak daripada yang terlihat.
+  --
+  -- Tanpanya, Postgres menyisipkan pemanggilan fungsi ini ke dalam kueri luar,
+  -- lalu mengevaluasinya ulang untuk SETIAP rujukan — dan payload-nya dirujuk
+  -- dua kali di sini serta berkali-kali lagi setelah disisipkan. Terukur: satu
+  -- snapshot memanggilnya sekitar dua puluh tujuh kali, masing-masing menghitung
+  -- ulang tiga puluh ribu baris master PO. Itulah 220 dari 227 milidetik yang
+  -- dihabiskan satu siklus polling.
+  freshness as materialized (
+    select inbound_source_freshness(nullif(upper(btrim(coalesce(p_site_code, ''))), '')) as payload
+  )
   select jsonb_build_object(
-    'operational_date', (select today::text from bounds),
-    'site_code', (select site from bounds),
+    'operational_date', ((timezone('Asia/Jakarta', now()) - interval '4 hours')::date)::text,
+    'site_code', nullif(upper(btrim(coalesce(p_site_code, ''))), ''),
     'server_time', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
     'rows', payload.rows,
     'sites', sites.rows,
@@ -435,15 +580,26 @@ returns jsonb language sql stable as $$
            coalesce(p_from, (timezone('Asia/Jakarta', now()) - interval '7 days')::date) as from_date,
            coalesce(p_to, (timezone('Asia/Jakarta', now()))::date) as to_date
   )
+  -- Batas baris HARUS berada di dalam subquery.
+  --
+  -- Bentuk sebelumnya menaruh `limit 5000` di samping jsonb_agg, dan agregat
+  -- selalu menciut menjadi satu baris — jadi yang dibatasi adalah satu baris
+  -- hasil itu, bukan lima ribu tiket yang diagregasi ke dalamnya. Batasnya
+  -- tidak pernah berlaku sama sekali: rentang sebulan mengirim seluruh isinya
+  -- sebagai satu JSON raksasa, dan browser yang menerimanya membeku.
+  , capped as (
+    select b.*
+      from inbound_board b, bounds x
+     where b.site_code = any(inbound_scoped_sites(p_site_code))
+       and b.operational_date between x.from_date and x.to_date
+     order by b.created_at desc
+     limit 5000
+  )
   select jsonb_build_object(
     'from', (select from_date::text from bounds),
     'to', (select to_date::text from bounds),
-    'rows', coalesce((
-      select jsonb_agg(to_jsonb(b) order by b.created_at desc)
-        from inbound_board b, bounds x
-       where (x.site is null or b.site_code = x.site)
-         and b.operational_date::date between x.from_date and x.to_date
-       limit 5000), '[]'::jsonb));
+    'truncated', (select count(*) from capped) >= 5000,
+    'rows', coalesce((select jsonb_agg(to_jsonb(capped) order by capped.created_at desc) from capped), '[]'::jsonb));
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -584,6 +740,37 @@ end; $$;
 -- ---------------------------------------------------------------------------
 -- 16. Aksi tiket
 -- ---------------------------------------------------------------------------
+
+/**
+ * Menolak gate yang sedang dipakai tiket lain yang masih bongkar.
+ *
+ * Papan antrean sudah menampilkan gate terpakai sebagai opsi yang tidak dapat
+ * dipilih, tetapi itu hanya berlaku bagi layar yang datanya mutakhir. Dua
+ * supervisor yang menekan "Mulai bongkar" dalam selang beberapa detik sama-sama
+ * melihat dock yang sama masih kosong — dan dua truk diarahkan ke tempat yang
+ * sama, di gudang beku, dengan pintu yang harus tetap tertutup.
+ *
+ * Pemeriksaannya karena itu harus di sini, tempat kedua permintaan bertemu.
+ */
+create or replace function inbound_assert_gate_free(p_ticket_id text, p_gate text, p_site text)
+returns void language plpgsql as $$
+declare v_holder text;
+begin
+  if p_gate is null then return; end if;
+
+  select queue_no into v_holder
+    from tickets
+   where gate = p_gate
+     and ticket_id <> p_ticket_id
+     and upper(coalesce(status, '')) = 'UNLOADING'
+     and (p_site is null or site_code = p_site)
+   limit 1;
+
+  if v_holder is not null then
+    raise exception 'Gate % sedang dipakai tiket %.', p_gate, v_holder;
+  end if;
+end; $$;
+
 create or replace function inbound_set_arrival(p_payload jsonb, p_actor jsonb default '{}'::jsonb)
 returns jsonb language plpgsql as $$
 declare
@@ -596,8 +783,18 @@ begin
     raise exception 'Jam kedatangan tidak boleh melewati waktu sekarang.';
   end if;
 
-  update tickets set arrived_at = v_at where ticket_id = v_id returning * into v_row;
+  select * into v_row from tickets where ticket_id = v_id;
   if not found then raise exception 'Ticket tidak ditemukan.'; end if;
+
+  -- Kedatangan tidak boleh terjadi SETELAH bongkar dimulai. Koreksi semacam itu
+  -- membuat lama tunggu driver menjadi negatif, dan laporan pagi berikutnya
+  -- melaporkan angka yang mustahil tanpa petunjuk dari mana asalnya.
+  if v_row.start_unloading_at is not null and v_at > v_row.start_unloading_at then
+    raise exception 'Jam kedatangan tidak boleh setelah bongkar dimulai (%).',
+      to_char(v_row.start_unloading_at at time zone 'Asia/Jakarta', 'HH24:MI');
+  end if;
+
+  update tickets set arrived_at = v_at where ticket_id = v_id returning * into v_row;
 
   insert into ticket_events(ticket_id, event_type, actor_role, actor_name, payload_json)
     values(v_id, 'ARRIVAL_RECORDED', p_actor->>'role', p_actor->>'name',
@@ -616,11 +813,14 @@ begin
   if v_id = '' then raise exception 'ticket_id wajib diisi.'; end if;
   if v_gate is null then raise exception 'Gate wajib ditentukan saat memanggil driver.'; end if;
 
-  select * into v_row from tickets where ticket_id = v_id;
+  -- Baris dikunci sampai transaksi selesai. Tanpa kunci ini, dua panggilan
+  -- bersamaan sama-sama lolos pemeriksaan gate sebelum salah satunya menulis.
+  select * into v_row from tickets where ticket_id = v_id for update;
   if not found then raise exception 'Ticket tidak ditemukan.'; end if;
   if upper(coalesce(v_row.status, '')) in ('COMPLETED', 'EXPIRED') then
     raise exception 'Ticket sudah % dan tidak dapat dipanggil.', upper(v_row.status);
   end if;
+  perform inbound_assert_gate_free(v_id, v_gate, v_row.site_code);
 
   update tickets set
     status = case when upper(status) = 'UNLOADING' then status else 'CALLED' end,
@@ -650,11 +850,19 @@ declare
 begin
   if v_id = '' then raise exception 'ticket_id wajib diisi.'; end if;
 
-  select * into v_ticket from tickets where ticket_id = v_id;
+  select * into v_ticket from tickets where ticket_id = v_id for update;
   if not found then raise exception 'Ticket tidak ditemukan.'; end if;
   if upper(coalesce(v_ticket.status, '')) in ('COMPLETED', 'EXPIRED') then
     raise exception 'Ticket sudah % dan tidak dapat dimulai ulang.', upper(v_ticket.status);
   end if;
+
+  -- Gate wajib ada sebelum SLA mulai berdetak: tanpa itu papan tidak dapat
+  -- menunjukkan dock mana yang terpakai, dan pemeriksaan tabrakan di bawah ini
+  -- tidak punya apa pun untuk diperiksa.
+  if coalesce(v_gate, v_ticket.gate) is null then
+    raise exception 'Gate wajib ditentukan sebelum bongkar dimulai.';
+  end if;
+  perform inbound_assert_gate_free(v_id, coalesce(v_gate, v_ticket.gate), v_ticket.site_code);
 
   -- Idempoten: menekan dua kali tidak menggeser jam mulai, karena itu akan
   -- memperpanjang SLA secara diam-diam.
@@ -738,13 +946,37 @@ end; $$;
 -- ---------------------------------------------------------------------------
 -- 17. Pemeliharaan
 -- ---------------------------------------------------------------------------
-create or replace function inbound_delete_tickets_by_date(p_operational_date date)
+/**
+ * Menghapus tiket satu hari operasional.
+ *
+ * Cakupan gudang WAJIB diberikan bila ada lebih dari satu gudang aktif.
+ * Sebelumnya fungsi ini menghapus tiket seluruh gudang untuk tanggal itu,
+ * padahal pemanggilnya selalu sedang melihat satu gudang saja — admin yang
+ * membersihkan data uji coba di Srengseng ikut menghapus hari kerja Pegangsaan,
+ * tanpa satu pun konfirmasi yang menyebutkan hal itu.
+ */
+create or replace function inbound_delete_tickets_by_date(
+  p_operational_date date,
+  p_site_code text default null
+)
 returns jsonb language plpgsql as $$
-declare v_count integer;
+declare
+  v_count integer;
+  v_site text := nullif(upper(btrim(coalesce(p_site_code, ''))), '');
+  v_active integer;
 begin
-  delete from tickets where operational_date = p_operational_date;
+  if p_operational_date is null then raise exception 'Tanggal operasional wajib diisi.'; end if;
+
+  select count(*) into v_active from site_master where active;
+  if v_site is null and v_active > 1 then
+    raise exception 'Kode gudang wajib diisi saat lebih dari satu gudang aktif.';
+  end if;
+
+  delete from tickets
+   where operational_date = p_operational_date
+     and (v_site is null or site_code = v_site);
   get diagnostics v_count = row_count;
-  return jsonb_build_object('deleted', v_count, 'operational_date', p_operational_date);
+  return jsonb_build_object('deleted', v_count, 'operational_date', p_operational_date, 'site_code', v_site);
 end; $$;
 
 create or replace function inbound_delete_single_ticket(p_payload jsonb)
@@ -755,4 +987,34 @@ begin
   delete from tickets where ticket_id = v_id;
   get diagnostics v_count = row_count;
   return jsonb_build_object('deleted', v_count, 'ticket_id', v_id);
+end; $$;
+
+/**
+ * Pemangkasan riwayat.
+ *
+ * Dua tabel di skema ini tumbuh selamanya dan tidak pernah dibaca setelah
+ * beberapa hari: `sync_runs` bertambah dua belas baris tiap jam — sekitar
+ * seratus ribu baris per tahun — dan hanya baris terakhirnya yang pernah
+ * ditanyakan. `ticket_events` adalah jejak audit, jadi umurnya jauh lebih
+ * panjang, tetapi tetap terbatas.
+ *
+ * Menjalankannya sebagai fungsi, bukan sebagai cron di dalam database,
+ * mengikuti keputusan yang sama seperti sinkronisasi Superset: penjadwalnya ada
+ * di proses Node, sehingga kegagalannya muncul di log yang sama dengan sisa
+ * aplikasi alih-alih hanya sebagai baris di sebuah tabel.
+ */
+create or replace function inbound_prune_history(
+  p_sync_run_days integer default 14,
+  p_event_days integer default 180
+)
+returns jsonb language plpgsql as $$
+declare v_runs integer; v_events integer;
+begin
+  delete from sync_runs where started_at < now() - make_interval(days => greatest(p_sync_run_days, 1));
+  get diagnostics v_runs = row_count;
+
+  delete from ticket_events where created_at < now() - make_interval(days => greatest(p_event_days, 30));
+  get diagnostics v_events = row_count;
+
+  return jsonb_build_object('sync_runs_deleted', v_runs, 'ticket_events_deleted', v_events);
 end; $$;

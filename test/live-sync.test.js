@@ -58,8 +58,12 @@ test("sync Superset tetap menyaring ke gudang aktif saja", () => {
 test("halaman Pengaturan menampilkan rantai sumber secara terpisah", () => {
   const settings = read("js/pages/settings.js");
   assert.match(settings, /Master PO Superset/);
-  assert.match(settings, /inbound-sync-superset-5m/);
   assert.match(settings, /SUPERSET_SESSION_COOKIE/);
+  // Penjadwalnya kini timer di dalam proses API, bukan lagi pg_cron. Layar yang
+  // masih menyuruh operator memeriksa cron yang tidak ada mengirim mereka
+  // mencari di tempat yang salah tepat saat sync sedang bermasalah.
+  assert.doesNotMatch(settings, /inbound-sync-superset-5m|pg_cron/, "nama cron lama sudah tidak berlaku");
+  assert.match(settings, /Penjadwal di dalam proses API/);
 });
 
 test("tidak ada CTE yang menggabungkan alias.* dengan kolom join bernama sama", () => {

@@ -1,8 +1,9 @@
 # Deployment — langkah demi langkah
 
-Seluruh sistem berjalan di server Coolify Anda sendiri: Postgres, API Node, dan
-nginx dalam satu `docker-compose.yml`. Tidak ada layanan terkelola, tidak ada
-tier percobaan, dan tidak ada proyek yang ditangguhkan setelah tujuh hari sepi.
+Seluruh sistem berjalan di server Coolify Anda sendiri: Postgres dan satu
+proses Node dalam satu `docker-compose.yml`. Tidak ada layanan terkelola, tidak
+ada tier percobaan, dan tidak ada proyek yang ditangguhkan setelah tujuh hari
+sepi.
 
 Perkiraan waktu: 10–15 menit untuk deployment pertama, satu tekan Deploy untuk
 pembaruan berikutnya.
@@ -17,8 +18,8 @@ pembaruan berikutnya.
 | Docker + Compose     | Disediakan Coolify      |
 | Node 22+ (lokal saja)| `node --version`        |
 
-Tidak ada layanan berbayar dan tidak ada tier percobaan. Postgres, Node, dan
-nginx berjalan di server Anda sendiri.
+Tidak ada layanan berbayar dan tidak ada tier percobaan. Postgres dan Node
+berjalan di server Anda sendiri.
 
 ---
 
@@ -175,9 +176,28 @@ docker compose exec db pg_dump -U inbound inbound > cadangan.sql
 | `Role tidak dikenal`                     | Salah ketik pada `role`                      |
 | `INBOUND_AUTH_SECRET belum diset`        | Sesi tidak dapat ditandatangani              |
 | Semua OK tetapi login tetap ditolak      | Sandinya memang berbeda                      |
+| `429 Terlalu banyak percobaan masuk`     | Batas laju — tunggu sesuai `Retry-After`     |
 
 API membedakan keduanya di tingkat HTTP: **401** berarti kredensial salah,
-**503** berarti konfigurasi server bermasalah.
+**503** berarti konfigurasi server bermasalah, **429** berarti terlalu banyak
+percobaan dari alamat atau akun yang sama.
+
+### Kontainer menolak start
+
+Bila `INBOUND_AUTH_SECRET` kosong atau lebih pendek dari 16 karakter, aplikasi
+**berhenti sebelum membuka port** dan menulis alasannya ke log.
+
+Itu disengaja. `createHmac("sha256", "")` adalah HMAC yang sah dengan kunci
+kosong: aplikasi yang menyala tanpa kunci menerima token sesi yang dapat disusun
+siapa pun, berperan apa pun, tanpa pernah menyentuh layar masuk. Aplikasi yang
+tidak menyala jauh lebih mudah disadari daripada aplikasi yang menyala tanpa
+kunci.
+
+Buat kuncinya dengan:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
 
 ---
 

@@ -2,7 +2,7 @@
  * SERVER PENGEMBANGAN LOKAL
  *
  * Menjalankan `npm run dev` menyajikan berkas statis di http://localhost:4173
- * dan MEMPROKSIKAN permintaan API ke Supabase Edge Function.
+ * dan MEMPROKSIKAN permintaan API ke kontainer API lokal.
  *
  * Proksi ini menyamakan pengembangan dengan produksi: di kedua tempat browser
  * memanggil `/api/inbound` pada origin yang sama, sehingga tidak ada perilaku
@@ -15,7 +15,7 @@
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, normalize, resolve } from "node:path";
+import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -69,11 +69,30 @@ async function proxy(request, response, requestUrl) {
   }
 }
 
+/**
+ * Berkas yang boleh dilihat browser — daftar-IZIN, sama seperti di produksi.
+ *
+ * Server ini menyajikan dari akar proyek, dan akar proyek berisi jauh lebih
+ * banyak daripada paket statis: `db/schema.sql`, `api/`, dan — di mesin
+ * pengembang — `.env` berisi sandi database serta kunci penanda tangan sesi.
+ * Tanpa daftar ini, `curl localhost:4173/.env` mengembalikan semuanya.
+ *
+ * Risikonya memang lokal saja, tetapi menyamakan perilakunya dengan produksi
+ * berarti selisih di antara keduanya tidak pernah menjadi kejutan.
+ */
+const PUBLIC_FILES = new Set(["/index.html", "/style.css", "/favicon.ico", "/robots.txt"]);
+const PUBLIC_DIRECTORIES = ["/js/", "/assets/"];
+
+function isPublic(pathname) {
+  return PUBLIC_FILES.has(pathname) || PUBLIC_DIRECTORIES.some((prefix) => pathname.startsWith(prefix));
+}
+
 async function serveStatic(response, pathname) {
-  // Normalisasi lebih dulu supaya "../" tidak dapat keluar dari folder proyek.
-  const safe = normalize(pathname).replace(/^(\.\.[/\\])+/, "");
-  const file = join(ROOT, safe === "/" || safe === "\\" ? "index.html" : safe);
-  if (!file.startsWith(ROOT)) {
+  // Normalisasi mendahului pencocokan: `/js/../.env` juga diawali "/js/".
+  const normalized = normalize(pathname).split(sep).join("/");
+  const requested = normalized === "/" || normalized === "" ? "/index.html" : normalized;
+  const file = join(ROOT, isPublic(requested) ? requested : "/index.html");
+  if (!file.startsWith(ROOT + sep)) {
     response.writeHead(403).end("Forbidden");
     return;
   }

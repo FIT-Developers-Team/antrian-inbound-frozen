@@ -21,7 +21,7 @@ import { badge, chip, icon, pageHeader, section, toast } from "../ui.js";
 import { currentTheme, setTheme } from "../theme.js";
 
 /**
- * Kesegaran rantai Superset → Supabase, dipisahkan dari status koneksi papan.
+ * Kesegaran rantai Superset → Postgres, dipisahkan dari status koneksi papan.
  * Keduanya sering disamakan, padahal papan yang "live" sama sekali tidak
  * menjamin master PO masih mengalir dari sumbernya.
  */
@@ -33,7 +33,7 @@ function sourceSection() {
     return section({
       eyebrow: "Sumber data",
       title: "Master PO Superset",
-      body: `<p class="section-note">Belum ada catatan sinkronisasi. Jalankan <code>npm run doctor</code> untuk memeriksa cron dan cookie Superset.</p>`,
+      body: `<p class="section-note">Belum ada catatan sinkronisasi. Jalankan <code>npm run doctor</code> untuk memeriksa penjadwal dan cookie Superset.</p>`,
     });
   }
 
@@ -58,10 +58,10 @@ function sourceSection() {
           : ""
       }
       <p class="section-note">
-        Cron <code>inbound-sync-superset-5m</code> menarik ulang master PO tiap lima menit.
+        Penjadwal di dalam proses API menarik ulang master PO tiap lima menit.
         ${
           stale
-            ? "Sumber sudah lewat lima belas menit — periksa cron dan masa berlaku <code>SUPERSET_SESSION_COOKIE</code>."
+            ? "Sumber sudah lewat lima belas menit — periksa log kontainer dan masa berlaku <code>SUPERSET_SESSION_COOKIE</code>."
             : "Papan antrean sendiri menarik ulang tiap lima belas detik."
         }
       </p>`,
@@ -176,6 +176,10 @@ export function render(root) {
   root.querySelector("#site-select")?.addEventListener("change", async (event) => {
     setCurrentSite(event.target.value);
     api.clearEtagCache();
+    // Snapshot dan master PO gudang lama dibuang, bukan sekadar ditimpa:
+    // keduanya dikunci pada gudang dan menyisakannya membuat layar pendaftaran
+    // menyarankan PO milik gudang yang tidak lagi dipantau.
+    store.resetSnapshot();
     await store.refresh();
     toast(`Beralih ke gudang ${event.target.value}.`);
     globalThis.dispatchEvent(new CustomEvent("inbound:site-changed"));

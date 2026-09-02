@@ -25,6 +25,26 @@ const range = {
 
 let rows = [];
 let loading = false;
+/**
+ * Rentang yang datanya sudah pernah diminta.
+ *
+ * Tanpa penanda ini, `render()` yang mengakhiri dirinya dengan "kalau belum ada
+ * baris, muat" bertemu `load()` yang mengakhiri dirinya dengan "render" — dan
+ * rentang tanggal yang memang tidak punya tiket menjadi lingkaran tanpa ujung:
+ * muat, kosong, render, kosong, muat lagi, selamanya. Halaman tampak diam,
+ * sementara di baliknya browser membanjiri API dengan kueri riwayat yang setiap
+ * satunya memindai tabel tiket.
+ *
+ * "Tidak ada tiket" adalah jawaban yang sah, dan harus diingat sebagai jawaban.
+ */
+let loadedRange = "";
+/** Server memangkas riwayat pada 5.000 baris; operator perlu tahu bila kena. */
+let truncated = false;
+
+/** Gudang ikut menjadi bagian kunci: beralih gudang wajib menarik ulang. */
+function rangeKey() {
+  return `${currentSite()?.code || "ALL"}|${range.from}|${range.to}`;
+}
 
 /* --------------------------------------------------------------------------
  * Perhitungan
@@ -171,6 +191,15 @@ export function render(root) {
 
     ${summarize(rows)}
 
+    ${
+      truncated
+        ? `<div class="banner" role="status">
+             <strong>${icon("alert", 18)} Rentang terlalu lebar</strong>
+             <p>Hanya 5.000 tiket terbaru yang ditampilkan. Persempit rentang tanggal untuk melihat sisanya.</p>
+           </div>`
+        : ""
+    }
+
     ${section({
       eyebrow: `${rows.length} tiket`,
       title: "Rincian tiket",
@@ -180,7 +209,9 @@ export function render(root) {
   </div>`;
 
   bindEvents(root);
-  if (!rows.length && !loading) load(root);
+  // Rentang yang sudah pernah dijawab tidak diminta ulang, sekalipun jawabannya
+  // nol baris. Muat ulang dilakukan lewat tombol Terapkan.
+  if (loadedRange !== rangeKey() && !loading) load(root);
 }
 
 function bindEvents(root) {
@@ -191,19 +222,32 @@ function bindEvents(root) {
     range.to = event.target.value;
   });
   root.querySelector("#apply-range")?.addEventListener("click", (event) =>
-    withBusy(event.currentTarget, () => load(root)),
+    withBusy(event.currentTarget, () => {
+      // Terapkan selalu memaksa penarikan ulang, termasuk untuk rentang yang
+      // sama: itulah satu-satunya cara operator menyegarkan laporan.
+      loadedRange = "";
+      return load(root);
+    }),
   );
   root.querySelector("#export-csv")?.addEventListener("click", exportCsv);
 }
 
 async function load(root) {
   loading = true;
+  const requested = rangeKey();
   try {
     const payload = await api.fetchHistory(range.from, range.to);
     rows = Array.isArray(payload?.rows) ? payload.rows : [];
+    truncated = Boolean(payload?.truncated);
+    loadedRange = requested;
   } catch (error) {
     toast(error.message, "error");
     rows = [];
+    truncated = false;
+    // Kegagalan juga ditandai sebagai "sudah dicoba". Mencoba ulang otomatis
+    // saat API sedang bermasalah hanya memperberat API yang sedang bermasalah;
+    // tombol Terapkan tetap tersedia bagi operator yang ingin mengulang.
+    loadedRange = requested;
   } finally {
     loading = false;
     render(root);
@@ -234,7 +278,16 @@ function exportCsv() {
   const link = document.createElement("a");
   link.href = url;
   link.download = `inbound-${currentSite()?.code || "ALL"}-${range.from}-${range.to}.csv`;
+  // Tautan harus berada di dokumen sebelum diklik: sebagian browser mengabaikan
+  // klik pada elemen yang tidak pernah terpasang.
+  link.style.display = "none";
+  document.body.append(link);
   link.click();
-  URL.revokeObjectURL(url);
+  // Objek URL dilepas setelah unduhan sempat dimulai. Melepasnya seketika
+  // membatalkan unduhan yang belum sempat berjalan di sebagian browser.
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    link.remove();
+  }, 1000);
   toast(`${rows.length} baris diekspor.`);
 }

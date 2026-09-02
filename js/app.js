@@ -97,7 +97,21 @@ function renderLogin() {
       // operator tidak menatap formulir yang seolah tidak merespons.
       activePage = pagesForRole(user.role)[0] || "board";
       renderShell();
-      store.refresh();
+      // Sesi hidup dinyalakan DI SINI, bukan hanya di boot().
+      //
+      // Sebelumnya baris ini hanya `store.refresh()`, dan akibatnya cukup parah:
+      // operator yang baru saja masuk mendapat papan yang tidak pernah hidup.
+      // Tidak ada pelanggan state, jadi snapshot yang tiba tidak pernah
+      // digambar; tidak ada polling, jadi tiket baru tidak pernah muncul; tidak
+      // ada ticker, jadi hitung mundur SLA tidak pernah berdetak. Layarnya diam
+      // di "Memuat antrean…" sampai halaman dimuat ulang dengan tangan — dan
+      // tombol "Muat ulang" pun tidak menolong, karena yang hilang justru
+      // pelanggan yang seharusnya menggambar hasilnya.
+      //
+      // boot() menyalakan semuanya dengan benar, tetapi boot() hanya melewati
+      // jalur itu ketika sesi SUDAH ada saat halaman dibuka. Login pertama
+      // melewatkan seluruhnya.
+      startLiveSession();
     } catch (error) {
       errorBox.textContent = error.message;
       errorBox.hidden = false;
@@ -293,11 +307,11 @@ const SYNC_LABEL = {
 /**
  * Pil status menggabungkan DUA rantai yang berbeda:
  *
- *   1. Supabase → browser   (polling papan, tiap 15 detik)
- *   2. Superset → Supabase  (cron master PO PGS 160, tiap 5 menit)
+ *   1. Postgres → browser   (polling papan, tiap 15 detik)
+ *   2. Superset → Postgres  (penjadwal master PO PGS 160, tiap 5 menit)
  *
- * Rantai kedua yang dulu tidak terlihat sama sekali. Bila cron mati atau cookie
- * Superset kedaluwarsa, papan tetap tampak "Tersambung" karena tiket masih
+ * Rantai kedua yang dulu tidak terlihat sama sekali. Bila penjadwal mati atau
+ * cookie Superset kedaluwarsa, papan tetap tampak "Tersambung" karena tiket masih
  * mengalir, sementara master PO membeku — dan pendaftaran mulai menolak PO yang
  * jelas-jelas ada. Sumber yang basi karena itu mengalahkan status koneksi.
  */
@@ -315,7 +329,7 @@ function updateSyncPill() {
       `Sumber ${source.location_id || "PGS"} basi · ${formatDuration(source.age_seconds)}`;
     pill.title =
       `Master PO terakhir tersinkron ${formatDuration(source.age_seconds)} lalu. ` +
-      `Cron Superset seharusnya berjalan tiap 5 menit.`;
+      `Sinkronisasi Superset seharusnya berjalan tiap 5 menit.`;
     return;
   }
 
@@ -337,13 +351,64 @@ function signOut() {
 
 globalThis.addEventListener("inbound:signed-out", signOut);
 globalThis.addEventListener("inbound:site-changed", () => {
-  document.getElementById("topbar-title").textContent = brand();
+  const title = document.getElementById("topbar-title");
+  if (title) title.textContent = brand();
   renderPage();
 });
 
 /* --------------------------------------------------------------------------
  * Bootstrap
  * ----------------------------------------------------------------------- */
+/**
+ * Menyalakan segala yang membuat papan hidup: pelanggan state, polling,
+ * ticker SLA, dan jam dinding.
+ *
+ * Dipanggil dari DUA tempat — saat halaman dibuka dengan sesi yang sudah ada,
+ * dan tepat setelah login berhasil. Keduanya wajib, dan sebelumnya hanya yang
+ * pertama yang melakukannya.
+ */
+let liveSessionBound = false;
+
+function startLiveSession() {
+  // Polling dan ticker selalu dinyalakan ulang: keduanya dimatikan saat keluar,
+  // dan operator berikutnya di tablet yang sama harus mendapat papan yang hidup
+  // tanpa perlu memuat ulang halaman.
+  store.refresh();
+  store.startPolling();
+  startTicker();
+
+  // Sisanya memasang pendengar global, dan itu hanya boleh sekali. Memasangnya
+  // ulang pada setiap login menumpuk pelanggan: dua kali masuk berarti setiap
+  // snapshot menggambar papan dua kali, tiga kali masuk tiga kali, dan
+  // seterusnya sampai tabletnya tersendat.
+  if (liveSessionBound) return;
+  liveSessionBound = true;
+
+  store.subscribe((_state, detail = {}) => {
+    // Pil status dan lencana selalu diperbarui: keduanya menyentuh dua simpul
+    // teks dan tidak mengganggu apa pun yang sedang dikerjakan operator.
+    updateSyncPill();
+    updateWaitingBadge();
+
+    // Papan hanya digambar ulang bila snapshotnya benar-benar berbeda.
+    //
+    // Sebelumnya ia dibangun ulang tiap lima belas detik tanpa syarat. Di gudang
+    // yang sepi itu berarti membuang dan membangun kembali seluruh daftar kartu
+    // empat kali per menit tanpa satu pun piksel yang berubah — dan setiap kali
+    // itu terjadi, kursor operator yang sedang mengetik di kotak pencarian
+    // terlempar keluar. Hitung mundur SLA tidak bergantung pada render ini; ia
+    // diperbarui di tempat oleh ticker satu detik.
+    if (activePage === "board" && detail.dataChanged !== false) renderPage();
+  });
+
+  store.bindVisibilityRefresh();
+  bindVisibility();
+  onTick(() => {
+    const clock = document.getElementById("live-clock");
+    if (clock) clock.textContent = new Date().toLocaleTimeString("id-ID");
+  });
+}
+
 function boot() {
   applyTheme();
 
@@ -353,25 +418,7 @@ function boot() {
   }
 
   renderShell();
-
-  store.subscribe(() => {
-    updateSyncPill();
-    updateWaitingBadge();
-    // Halaman yang menampilkan data papan digambar ulang saat snapshot baru
-    // tiba. Halaman formulir tidak, supaya isian operator tidak hilang.
-    if (activePage === "board") renderPage();
-  });
-
-  store.refresh();
-  store.startPolling();
-  store.bindVisibilityRefresh();
-
-  startTicker();
-  bindVisibility();
-  onTick(() => {
-    const clock = document.getElementById("live-clock");
-    if (clock) clock.textContent = new Date().toLocaleTimeString("id-ID");
-  });
+  startLiveSession();
 }
 
 if (document.readyState === "loading") {

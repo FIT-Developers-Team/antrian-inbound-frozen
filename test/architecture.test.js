@@ -101,14 +101,39 @@ test("menulis membatalkan cache ETag agar papan tidak tampak tidak berubah", () 
 test("papan mengirim satu baris per tiket, bukan satu baris per PO", () => {
   const sql = schema();
   assert.match(sql, /create or replace view inbound_board/);
-  assert.match(sql, /with po_rollup as \(/, "PO harus diagregasi di server");
-  assert.match(sql, /string_agg\(po_number/);
+  assert.match(sql, /string_agg\(po_number/, "PO harus diagregasi di server");
   assert.match(apiServer(), /inbound_board_snapshot/);
+});
+
+test("agregasi PO didorong per tiket, bukan atas seluruh tabel", () => {
+  // Bentuk CTE (`with po_rollup as (select ... group by ticket_id)`) memaksa
+  // Postgres mengagregasi SELURUH ticket_pos setiap kali view disentuh —
+  // termasuk pada polling lima belas detik yang hanya meminta dua hari
+  // terakhir. Predikat gudang dan tanggal mustahil didorong masuk, karena CTE
+  // itu tidak membawa kolomnya.
+  const sql = schema();
+  const view = sql.slice(sql.indexOf("create or replace view inbound_board"), sql.indexOf("-- 9."));
+  assert.match(view, /left join lateral \(/, "agregasi PO harus lateral, bukan CTE");
+  assert.match(view, /where ticket_pos\.ticket_id = t\.ticket_id/, "lateral harus terikat ke tiketnya");
+  assert.doesNotMatch(view, /^with po_rollup as \(/m, "CTE agregat penuh tidak boleh kembali");
+});
+
+test("tanggal operasional tetap bertipe date agar index terpakai", () => {
+  // `t.operational_date::text as operational_date` membuat setiap penyaringan
+  // tanggal di atas view berjalan pada ekspresi, bukan pada kolom — sehingga
+  // tickets_board_idx tidak pernah terpakai dan setiap snapshot memindai
+  // seluruh tabel tiket. JSON-nya identik: to_jsonb(date) tetap "YYYY-MM-DD".
+  const sql = schema();
+  const view = sql.slice(sql.indexOf("create or replace view inbound_board"), sql.indexOf("-- 9."));
+  assert.doesNotMatch(view, /operational_date::text/, "cast ke text mematikan index tanggal");
+  assert.match(view, /t\.gate, t\.slot, t\.operational_date,/);
 });
 
 test("riwayat laporan dibatasi rentang tanggal di server", () => {
   assert.match(schema(), /create or replace function inbound_history/);
-  assert.match(schema(), /b\.operational_date::date between x\.from_date and x\.to_date/);
+  // Tanpa `::date`: kolomnya memang sudah bertipe date, dan cast itu membuat
+  // penyaringan berjalan pada ekspresi sehingga tickets_board_idx tidak terpakai.
+  assert.match(schema(), /b\.operational_date between x\.from_date and x\.to_date/);
   assert.match(read("js/api.js"), /export function fetchHistory\(from, to\)/);
 });
 
@@ -204,7 +229,15 @@ test("dokumen membawa metadata dasar dan hint performa", () => {
   assert.match(html, /name="description"/);
   assert.match(html, /name="theme-color"[^>]*prefers-color-scheme: dark/);
   assert.match(html, /rel="preconnect" href="https:\/\/fonts\.gstatic\.com"/);
-  assert.match(html, /rel="preconnect" href="https:\/\/qiafoaoslnbmtsbnmqou\.supabase\.co"/);
+});
+
+test("tidak ada preconnect ke host yang tidak pernah dihubungi", () => {
+  // Preconnect membuka sambungan TLS penuh pada setiap muat halaman. Yang
+  // menunjuk backend Supabase lama bertahan lama setelah backendnya
+  // dipensiunkan: biaya penuh, manfaat nol.
+  const hosts = [...html.matchAll(/rel="preconnect" href="https:\/\/([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(hosts, ["fonts.googleapis.com", "fonts.gstatic.com"], `preconnect asing: ${hosts.join(", ")}`);
+  assert.doesNotMatch(html, /supabase\.co/i, "tidak ada host Supabase yang masih dirujuk");
 });
 
 test("tema dipasang sebelum paint pertama agar tidak ada kedipan putih", () => {

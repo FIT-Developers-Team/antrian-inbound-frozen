@@ -59,7 +59,7 @@ console.log("");
 console.log("  Web");
 try {
   const health = await call("/healthz");
-  if (health.status === 200) console.log(ok("nginx menyajikan berkas statis."));
+  if (health.status === 200) console.log(ok("Aplikasi hidup dan menyajikan berkas statis."));
   else {
     problems += 1;
     console.log(fail(`/healthz mengembalikan HTTP ${health.status}.`));
@@ -77,8 +77,8 @@ try {
   const data = health.body;
   if (health.status === 502 || health.status === 504) {
     problems += 1;
-    console.log(fail("nginx tidak dapat menjangkau layanan API."));
-    console.log(info("Periksa: docker compose logs api"));
+    console.log(fail("Proxy platform tidak dapat menjangkau aplikasi."));
+    console.log(info("Periksa: docker compose logs app"));
   } else if (data?.ok) {
     console.log(ok(`API tersambung ke Postgres — ${data.tickets ?? 0} tiket, gudang aktif ${(data.active_sites || []).join(", ")}.`));
     console.log(info(`Master PO: ${data.po_master_rows ?? 0} baris.`));

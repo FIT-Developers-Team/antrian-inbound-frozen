@@ -1,16 +1,18 @@
 /* ==========================================================================
  * KONFIGURASI DEPLOYMENT
  *
- * Frontend berbicara ke API lewat origin yang sama. nginx di kontainer `web`
- * memproksikan jalur ini ke layanan `api`, jadi tidak ada URL backend yang
- * perlu ditanam di kode browser — dan permintaan API tidak pernah menjadi
- * lintas asal, sehingga CORS berhenti menjadi sumber kegagalan.
+ * Frontend berbicara ke API lewat origin yang sama — dan sejak nginx dihapus,
+ * "origin yang sama" berarti proses yang sama persis. Satu kontainer Node
+ * menyajikan index.html dan melayani /api/inbound sekaligus.
  *
- * Alamat backend yang sebenarnya diatur di docker-compose.yml lewat
- * `API_UPSTREAM`, bukan di sini.
+ * Konsekuensinya bukan sekadar kerapian: tidak ada URL backend yang perlu
+ * ditanam di kode browser, permintaan API tidak pernah menjadi lintas asal
+ * sehingga CORS berhenti menjadi sumber kegagalan, dan tidak ada lagi proxy
+ * yang bisa hidup sementara backend di belakangnya mati. Bila halaman ini
+ * termuat, API-nya pasti ikut hidup.
  * ========================================================================== */
 
-/** Jalur proksi. Harus cocok dengan blok `location` di deploy/nginx.conf.template. */
+/** Jalur API. Dilayani oleh proses yang sama yang menyajikan halaman ini. */
 export const API_PROXY_PATH = "/api/inbound";
 
 /**

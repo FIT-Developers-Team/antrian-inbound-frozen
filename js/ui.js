@@ -242,3 +242,25 @@ export async function withBusy(button, task) {
 export function setBusy(root, busy) {
   root?.setAttribute("aria-busy", busy ? "true" : "false");
 }
+
+/**
+ * Menunda pemanggilan sampai ketikan berhenti.
+ *
+ * Kotak pencarian di aplikasi ini menyaring daftar yang bisa berisi puluhan
+ * ribu baris. Menjalankan penyaringan pada setiap ketukan berarti mengerjakan
+ * pekerjaan yang sama sebanyak jumlah huruf yang diketik — dan semuanya kecuali
+ * yang terakhir langsung dibuang. Di tablet gudang yang CPU-nya sederhana, itu
+ * terasa sebagai huruf yang tertinggal di belakang jari.
+ *
+ * Seratus dua puluh milidetik cukup pendek untuk terasa seketika dan cukup
+ * panjang untuk melewati seluruh ketukan di tengah kata.
+ */
+export function debounce(fn, waitMs = 120) {
+  let timer = null;
+  const debounced = (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), waitMs);
+  };
+  debounced.cancel = () => clearTimeout(timer);
+  return debounced;
+}

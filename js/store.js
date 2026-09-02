@@ -5,11 +5,12 @@
  * `subscribe()` dan menerima snapshot terbaru; tidak ada halaman yang memanggil
  * backend sendiri untuk data papan.
  *
- * Polling, bukan WebSocket. Realtime Supabase pernah dipasang di sini tetapi
- * `realtime_config` selalu mengembalikan `enabled: false`, sehingga yang benar-
+ * Polling, bukan WebSocket. Klien realtime pernah dipasang di sini tetapi
+ * konfigurasinya selalu mengembalikan `enabled: false`, sehingga yang benar-
  * benar berjalan tetap polling — sambil tetap mengunduh ~50 KB klien realtime
  * pada setiap muat halaman. Polling ber-ETag lebih murah: server menjawab 304
- * tanpa body selama tidak ada perubahan.
+ * tanpa body selama tidak ada perubahan, dan sidik jari yang tidak bergeser
+ * membuat papan tidak digambar ulang sama sekali.
  * ========================================================================== */
 
 import { POLL_INTERVAL_MS } from "./config.js";
@@ -27,13 +28,24 @@ export const state = {
   /**
    * Kesegaran rantai Superset (PGS 160) → superset_po_master, dikirim server
    * bersama snapshot. Berbeda dari `lastSync`, yang hanya mengukur perjalanan
-   * Supabase → browser.
+   * Postgres → browser.
    */
   source: null,
   loading: true,
   error: "",
   lastSync: null,
   connection: "idle", // idle | online | pending | offline
+  /**
+   * Sidik jari snapshot terakhir, dikirim server bersama payload.
+   *
+   * Dipakai untuk menjawab satu pertanyaan yang sebelumnya tidak pernah
+   * ditanyakan: apakah siklus polling ini benar-benar membawa sesuatu yang
+   * baru? Tanpa itu, papan dibongkar dan dibangun ulang tiap lima belas detik
+   * sekalipun tidak ada satu tiket pun yang berubah — dan setiap kali itu
+   * terjadi, kursor operator yang sedang mengetik di kotak pencarian terlempar
+   * keluar, teks yang sedang disorot hilang, dan posisi gulir kembali ke atas.
+   */
+  fingerprint: "",
 };
 
 /**
@@ -52,10 +64,14 @@ export function subscribe(listener) {
   return () => listeners.delete(listener);
 }
 
-function emit() {
+/**
+ * @param {{ dataChanged?: boolean }} detail  `dataChanged` false berarti siklus
+ *   ini hanya memperbarui indikator koneksi; isi papan tidak bergerak.
+ */
+function emit(detail = { dataChanged: true }) {
   listeners.forEach((listener) => {
     try {
-      listener(state);
+      listener(state, detail);
     } catch (error) {
       console.error("Pelanggan state gagal", error);
     }
@@ -78,8 +94,16 @@ function setConnection(mode) {
  */
 export async function refresh({ silent = false } = {}) {
   if (!silent) state.loading = true;
+  let dataChanged = true;
   try {
     const payload = await api.fetchBoard();
+    const fingerprint = String(payload?.fingerprint || "");
+    // Sidik jari yang sama berarti server membangun payload yang sama persis.
+    // Halaman tidak perlu digambar ulang; hitung mundur SLA sudah diperbarui di
+    // tempat oleh ticker dan tidak bergantung pada render.
+    dataChanged = !fingerprint || fingerprint !== state.fingerprint;
+    state.fingerprint = fingerprint;
+
     state.rows = Array.isArray(payload?.rows) ? payload.rows : [];
     state.gates = Array.isArray(payload?.gates) ? payload.gates : [];
     state.checkers = Array.isArray(payload?.checkers) ? payload.checkers : [];
@@ -95,22 +119,57 @@ export async function refresh({ silent = false } = {}) {
     else console.warn("Polling gagal, mencoba lagi pada siklus berikutnya", error);
   } finally {
     state.loading = false;
-    emit();
+    // Penarikan yang tidak senyap selalu menggambar ulang: ia dipicu operator,
+    // yang berhak melihat bukti bahwa permintaannya dikerjakan.
+    emit({ dataChanged: dataChanged || !silent });
   }
 }
 
-/** Master PO hanya dibutuhkan layar pendaftaran, jadi dimuat sesuai permintaan. */
-export async function ensurePoMaster() {
-  if (state.poMaster.length) return state.poMaster;
-  try {
-    const payload = await api.fetchPoMaster();
-    state.poMaster = Array.isArray(payload?.rows) ? payload.rows : [];
-  } catch (error) {
-    console.warn("Master PO gagal dimuat", error);
-    state.poMaster = [];
-  }
-  emit();
-  return state.poMaster;
+/**
+ * Membuang snapshot tersimpan.
+ *
+ * Dipanggil saat berpindah gudang: tanpa itu, sidik jari gudang lama masih
+ * tersimpan dan snapshot gudang baru — bila kebetulan menghasilkan sidik jari
+ * yang sama, misalnya karena keduanya sedang kosong — dianggap "tidak berubah"
+ * dan papan tidak pernah digambar ulang.
+ */
+export function resetSnapshot() {
+  state.fingerprint = "";
+  state.poMaster = [];
+  poMasterRequest = null;
+}
+
+/**
+ * Master PO hanya dibutuhkan layar pendaftaran, jadi dimuat sesuai permintaan.
+ *
+ * Permintaan yang sedang berjalan disimpan dan dibagikan. Halaman pendaftaran
+ * memanggil fungsi ini dari `render()`, dan `render()` berjalan pada setiap
+ * ketukan tombol — tanpa penyimpanan ini, mengetik lima huruf sebelum
+ * permintaan pertama selesai memicu lima unduhan master PO sekaligus, masing-
+ * masing berisi puluhan ribu baris.
+ */
+let poMasterRequest = null;
+
+export function ensurePoMaster() {
+  if (state.poMaster.length) return Promise.resolve(state.poMaster);
+  if (poMasterRequest) return poMasterRequest;
+
+  poMasterRequest = api
+    .fetchPoMaster()
+    .then((payload) => {
+      state.poMaster = Array.isArray(payload?.rows) ? payload.rows : [];
+    })
+    .catch((error) => {
+      console.warn("Master PO gagal dimuat", error);
+      state.poMaster = [];
+    })
+    .then(() => {
+      poMasterRequest = null;
+      emit();
+      return state.poMaster;
+    });
+
+  return poMasterRequest;
 }
 
 /* --------------------------------------------------------------------------

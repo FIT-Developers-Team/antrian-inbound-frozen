@@ -16,6 +16,7 @@ import { elapsedMarkup } from "../sla.js";
 import {
   badge,
   chip,
+  debounce,
   dialog,
   emptyState,
   fact,
@@ -211,9 +212,10 @@ function errorBanner() {
   const message = store.state.error;
   if (!message) return "";
 
-  // Perintah perbaikan ditampilkan sebagai kode agar dapat langsung disalin.
-  const command = message.match(/(supabase [^.]+)/)?.[1];
-  const prose = command ? message.replace(command, "").replace(/Jalankan:\s*$/, "").trim() : message;
+  // Bila pesannya menyebut perintah yang harus dijalankan, perintah itu
+  // dipisahkan ke barisnya sendiri sebagai kode agar dapat langsung disalin.
+  const command = message.match(/(?:Jalankan|Perintah):\s*(.+?)\s*$/)?.[1];
+  const prose = command ? message.slice(0, message.indexOf(command)).replace(/(?:Jalankan|Perintah):\s*$/, "").trim() : message;
 
   return `<div class="banner" role="alert">
     <strong>${icon("alert", 18)} Data tidak dapat dimuat</strong>
@@ -277,55 +279,70 @@ export function render(root) {
         <select class="input" id="board-gate">${gateOptionsHtml}</select>
       </label>
       <div class="table-actions">
-        <span class="chip">${visible.length} tiket</span>
+        <span class="chip" id="board-count">${visible.length} tiket</span>
       </div>
     </div>
 
-    ${
-      visible.length
-        ? `<div class="board-grid">${visible.map(queueCard).join("")}</div>`
-        : emptyState(
-            store.state.loading ? "Memuat antrean…" : "Belum ada antrean",
-            store.state.loading
-              ? ""
-              : "Tiket baru muncul di sini begitu Security mendaftarkan kedatangan.",
-          )
-    }
+    <div id="board-list">${listMarkup(visible)}</div>
   </div>`;
 
   bindEvents(root);
 }
 
+function listMarkup(visible) {
+  if (visible.length) return `<div class="board-grid">${visible.map(queueCard).join("")}</div>`;
+  return emptyState(
+    store.state.loading ? "Memuat antrean…" : "Belum ada antrean",
+    store.state.loading ? "" : "Tiket baru muncul di sini begitu Security mendaftarkan kedatangan.",
+  );
+}
+
+/**
+ * Menggambar ulang HANYA daftar kartu.
+ *
+ * Penyaringan seluruhnya terjadi di memori, jadi mengetik di kotak pencarian
+ * tidak pernah menyentuh jaringan — tetapi sebelumnya ia tetap membangun ulang
+ * seluruh halaman, termasuk kotak pencarian itu sendiri. Akibatnya fokus dan
+ * posisi kursor harus dipulihkan dengan tangan setiap ketukan, dan kedua daftar
+ * pilihan di sampingnya ikut tertutup bila sedang terbuka.
+ */
+function renderList(root) {
+  const visible = sortByUrgency(applyFilters(store.state.rows));
+  const list = root.querySelector("#board-list");
+  if (list) list.innerHTML = listMarkup(visible);
+  const count = root.querySelector("#board-count");
+  if (count) count.textContent = `${visible.length} tiket`;
+  bindTicketActions(root);
+}
+
 function bindEvents(root) {
+  const filterList = debounce(() => renderList(root));
+
   root.querySelector("#board-query")?.addEventListener("input", (event) => {
     filters.query = event.target.value;
-    const caret = event.target.selectionStart;
-    // Hanya bagian daftar yang perlu digambar ulang, tetapi merender halaman
-    // penuh tetap murah karena tidak ada permintaan jaringan yang terlibat.
-    render(root);
-    // Fokus dan posisi kursor dikembalikan: tanpa ini kursor melompat ke akhir
-    // setiap ketukan, sehingga menyunting di tengah kata mustahil.
-    const input = root.querySelector("#board-query");
-    if (input) {
-      input.focus();
-      input.setSelectionRange(caret, caret);
-    }
+    filterList();
   });
 
   root.querySelector("#board-status")?.addEventListener("change", (event) => {
     filters.status = event.target.value;
-    render(root);
+    renderList(root);
   });
 
   root.querySelector("#board-gate")?.addEventListener("change", (event) => {
     filters.gate = event.target.value;
-    render(root);
+    renderList(root);
   });
 
   root.querySelector('[data-action="refresh"]')?.addEventListener("click", (event) =>
+    // Penarikan manual selalu menggambar ulang papan, bahkan bila sidik jarinya
+    // tidak berubah: operator yang menekan tombol berhak melihat buktinya.
     withBusy(event.currentTarget, () => store.refresh()),
   );
 
+  bindTicketActions(root);
+}
+
+function bindTicketActions(root) {
   root.querySelectorAll("[data-action][data-ticket]").forEach((button) => {
     button.addEventListener("click", () => handleAction(button));
   });

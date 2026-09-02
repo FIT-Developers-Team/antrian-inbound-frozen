@@ -74,9 +74,14 @@ test("js dan css tidak pernah di-cache lama", () => {
 });
 
 test("penyajian statis tidak dapat keluar dari folder publik", () => {
-  assert.match(staticServer, /normalize\(decodeURIComponent\(pathname\)\)/);
-  assert.match(staticServer, /if \(!file\.startsWith\(ROOT\)\)/);
+  assert.match(staticServer, /normalize\(decoded\)/);
+  assert.match(staticServer, /decodeURIComponent\(pathname\)/);
   assert.match(staticServer, /403/);
+
+  // Batasnya diperiksa dengan pemisah jalur, bukan sekadar awalan string:
+  // `startsWith("/app")` juga meloloskan `/app-rahasia/keys.env`.
+  assert.match(staticServer, /ROOT_PREFIX = ROOT\.endsWith\(sep\)/);
+  assert.match(staticServer, /!file\.startsWith\(ROOT_PREFIX\)/);
 });
 
 test("tipe konten modul ES benar", () => {

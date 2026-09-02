@@ -20,7 +20,7 @@ export function parseDate(value) {
   const text = String(value).trim();
   if (!text) return null;
 
-  // ISO dengan zona waktu — jalur yang dipakai seluruh payload Supabase.
+  // ISO dengan zona waktu — jalur yang dipakai seluruh payload API.
   if (/\d{4}-\d{2}-\d{2}T/.test(text)) {
     const parsed = new Date(text);
     return Number.isNaN(parsed.getTime()) ? null : parsed;

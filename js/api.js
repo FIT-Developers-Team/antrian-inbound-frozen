@@ -1,15 +1,15 @@
 /* ==========================================================================
  * ANTRIAN INBOUND FROZEN — KLIEN BACKEND
  *
- * Satu-satunya jalur ke server. Semua permintaan menuju Supabase Edge Function
- * `inbound-api`, membawa session bertanda tangan HMAC pada header Authorization.
- * Browser tidak pernah memegang service-role key, cookie Superset, maupun
- * secret Apps Script.
+ * Satu-satunya jalur ke server. Semua permintaan menuju `/api/inbound` pada
+ * origin yang sama, membawa session bertanda tangan HMAC pada header
+ * Authorization. Browser tidak pernah memegang kredensial database, cookie
+ * Superset, maupun kunci penanda tangan sesi.
  *
  * GET yang berulang (papan antrean) memakai ETag: server mengirim fingerprint
  * `md5(jumlah_baris | perubahan_terakhir)`, sehingga polling yang tidak
  * menemukan perubahan dijawab 304 tanpa body dan tanpa membangun payload di
- * Postgres.
+ * Postgres. Respons yang memang membawa isi dikompresi gzip atau brotli.
  * ========================================================================== */
 
 import { BACKEND_URL, STORAGE, currentSite } from "./config.js";
@@ -113,24 +113,26 @@ function authHeaders(extra = {}) {
  * Sesi yang ditolak server dibersihkan sekali di sini, sehingga setiap
  * pemanggil tidak perlu menangani 401 sendiri-sendiri.
  *
- * Kecualinya penting. Edge Function menjawab 401 untuk DUA hal yang berbeda:
- * sesi yang tidak sah, dan aksi yang tidak dikenalinya. Bila backend yang
- * ter-deploy lebih tua daripada frontend, ia tidak mengenal `board`, menjawab
- * 401, dan operator terlempar kembali ke layar login satu detik setelah
- * berhasil masuk — berulang tanpa penjelasan.
+ * Kecualinya penting. API menjawab 401 untuk DUA hal yang berbeda: sesi yang
+ * tidak sah, dan aksi yang tidak dikenalinya. Bila kontainer yang berjalan
+ * lebih tua daripada halaman yang termuat di browser — hal yang terjadi ketika
+ * tab lama dibiarkan terbuka melewati sebuah deploy — ia tidak mengenal aksi
+ * `board`, menjawab 401, dan operator terlempar kembali ke layar login satu
+ * detik setelah berhasil masuk, berulang tanpa penjelasan.
  *
  * Sesi yang baru saja terbit hampir mustahil kedaluwarsa (masa berlakunya 12
- * jam), jadi 401 pada menit pertama dibaca sebagai backend usang, bukan sebagai
- * sesi mati. Sesi tidak dihapus, dan pemanggil menerima pesan yang menyebutkan
- * penyebab sebenarnya.
+ * jam), jadi 401 pada menit pertama dibaca sebagai versi yang tidak sepadan,
+ * bukan sebagai sesi mati. Sesi tidak dihapus, dan pemanggil menerima pesan
+ * yang menyebutkan penyebab sebenarnya — beserta tindakan yang benar-benar
+ * menyelesaikannya.
  */
 const FRESH_SESSION_MS = 60_000;
 
 function handleUnauthorized() {
   if (sessionAgeMs() < FRESH_SESSION_MS) {
     throw new ApiError(
-      "Backend yang ter-deploy lebih lama daripada aplikasi ini dan belum mengenal aksi yang diminta. " +
-        "Jalankan: supabase db push && supabase functions deploy inbound-api",
+      "Versi aplikasi di browser tidak sepadan dengan server. " +
+        "Muat ulang halaman (Ctrl+Shift+R); bila masih terjadi, deploy ulang kontainer aplikasi.",
       409,
     );
   }

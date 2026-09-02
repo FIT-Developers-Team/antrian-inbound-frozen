@@ -10,7 +10,7 @@ import * as api from "../api.js";
 import * as store from "../store.js";
 import { DEFAULT_FLEET, FLEET_TYPES, currentSite } from "../config.js";
 import { esc, isValidPlate, normalizePlate, toLocalInputValue } from "../format.js";
-import { chip, emptyState, icon, pageHeader, section, toast, withBusy } from "../ui.js";
+import { chip, debounce, emptyState, icon, pageHeader, section, toast, withBusy } from "../ui.js";
 
 /** Isian yang bertahan antar render, sehingga daftar PO tidak hilang saat mengetik. */
 const form = {
@@ -82,20 +82,80 @@ function plateInput() {
     }`;
 }
 
-function poPicker() {
-  const query = form.poQuery.trim().toUpperCase();
-  const chosen = new Set(form.pos.map((po) => po.po_number));
-  const suggestions = query
-    ? store.state.poMaster
-        .filter(
-          (po) =>
-            !chosen.has(po.po_number) &&
-            (po.po_number?.toUpperCase().includes(query) ||
-              po.vendor_name?.toUpperCase().includes(query)),
-        )
-        .slice(0, 8)
-    : [];
+/**
+ * Index pencarian PO yang sudah di-uppercase.
+ *
+ * Master PGS berisi puluhan ribu baris. Menulis
+ * `po.po_number.toUpperCase().includes(query)` di dalam filter berarti membuat
+ * puluhan ribu string baru pada SETIAP ketukan tombol, lalu membuangnya semua.
+ * Bentuk huruf besarnya dihitung sekali per pemuatan master dan dipakai ulang.
+ *
+ * Index dibangun ulang ketika larik master berganti identitas — yang hanya
+ * terjadi saat master dimuat atau gudang berpindah.
+ */
+let searchIndex = { source: null, entries: [] };
 
+function poSearchIndex() {
+  const master = store.state.poMaster;
+  if (searchIndex.source === master) return searchIndex.entries;
+  searchIndex = {
+    source: master,
+    entries: master.map((po) => ({
+      po,
+      haystack: `${po.po_number || ""} ${po.vendor_name || ""}`.toUpperCase(),
+    })),
+  };
+  return searchIndex.entries;
+}
+
+/** Delapan saran teratas; lebih dari itu tidak muat di layar tablet. */
+const MAX_SUGGESTIONS = 8;
+
+function matchingPos() {
+  const query = form.poQuery.trim().toUpperCase();
+  if (!query) return [];
+  const chosen = new Set(form.pos.map((po) => po.po_number));
+  const found = [];
+  // Perulangan manual, bukan filter().slice(): pencarian berhenti begitu delapan
+  // saran terkumpul, alih-alih menelusuri seluruh master lalu membuang sisanya.
+  for (const entry of poSearchIndex()) {
+    if (chosen.has(entry.po.po_number)) continue;
+    if (!entry.haystack.includes(query)) continue;
+    found.push(entry.po);
+    if (found.length >= MAX_SUGGESTIONS) break;
+  }
+  return found;
+}
+
+/**
+ * Isi kotak saran saja.
+ *
+ * Dipisahkan dari poPicker() supaya mengetik hanya menulis ulang bagian ini,
+ * bukan membangun ulang seluruh halaman pendaftaran — yang membuang isian yang
+ * sedang diketik, menutup daftar pilihan armada, dan memindahkan fokus.
+ */
+function suggestionMarkup() {
+  const query = form.poQuery.trim();
+  const suggestions = matchingPos();
+
+  if (suggestions.length) {
+    return suggestions
+      .map(
+        (po) => `<button type="button" class="po-suggestion" data-add-po="${esc(po.po_number)}">
+          <strong>${esc(po.po_number)}</strong>
+          <small>${esc(po.vendor_name || "-")} · ${esc(po.count_sku || 0)} SKU · ${esc(po.request_quantity || 0)} qty</small>
+        </button>`,
+      )
+      .join("");
+  }
+  if (!query) return "";
+  if (!store.state.poMaster.length) {
+    return `<p class="section-note">Master PO belum selesai dimuat. Tunggu sebentar, atau pakai PO manual.</p>`;
+  }
+  return `<p class="section-note">Tidak ada PO cocok di master gudang aktif. Pakai PO manual bila memang belum terbit.</p>`;
+}
+
+function poPicker() {
   return `<div class="po-picker">
     ${
       form.pos.length
@@ -116,20 +176,7 @@ function poPicker() {
              value="${esc(form.poQuery)}" autocomplete="off" />
     </label>
 
-    ${
-      suggestions.length
-        ? `<div class="po-suggestions">${suggestions
-            .map(
-              (po) => `<button type="button" class="po-suggestion" data-add-po="${esc(po.po_number)}">
-                <strong>${esc(po.po_number)}</strong>
-                <small>${esc(po.vendor_name || "-")} · ${esc(po.count_sku || 0)} SKU · ${esc(po.request_quantity || 0)} qty</small>
-              </button>`,
-            )
-            .join("")}</div>`
-        : query
-          ? `<p class="section-note">Tidak ada PO cocok di master gudang aktif. Pakai PO manual bila memang belum terbit.</p>`
-          : ""
-    }
+    <div class="po-suggestions" id="po-suggestions">${suggestionMarkup()}</div>
 
     <label>
       <span>PO manual</span>
@@ -149,7 +196,17 @@ function poPicker() {
 export function render(root) {
   if (!form.arrivedAt) resetForm();
   const site = currentSite();
-  store.ensurePoMaster();
+
+  // Master PO dimuat sekali dan dibagikan; permintaan yang sedang berjalan
+  // tidak digandakan. Saat ia tiba, kotak saran diperbarui di tempat — tanpa
+  // itu, operator yang sudah mengetik sebelum master selesai dimuat melihat
+  // "tidak ada PO cocok" sampai ia menghapus dan mengetik ulang.
+  store.ensurePoMaster().then(() => {
+    const slot = root.querySelector("#po-suggestions");
+    if (!slot || !form.poQuery.trim()) return;
+    slot.innerHTML = suggestionMarkup();
+    bindSuggestions(root);
+  });
 
   root.innerHTML = `<div class="dashboard-page">
     ${pageHeader({
@@ -296,30 +353,23 @@ function bindEvents(root) {
     form.ticketType = event.target.value;
   });
 
+  // Mengetik hanya menulis ulang kotak saran. Halaman penuh TIDAK digambar
+  // ulang: itulah yang dulu memaksa fokus dikembalikan dengan tangan setiap
+  // ketukan, dan yang membuat kursor selalu melompat ke ujung sehingga
+  // menyunting di tengah nomor PO mustahil.
+  const refreshSuggestions = () => {
+    const slot = root.querySelector("#po-suggestions");
+    if (slot) slot.innerHTML = suggestionMarkup();
+    bindSuggestions(root);
+  };
+  const refreshSuggestionsSoon = debounce(refreshSuggestions);
+
   root.querySelector("#po-query")?.addEventListener("input", (event) => {
     form.poQuery = event.target.value;
-    rerender();
-    const input = root.querySelector("#po-query");
-    input?.focus();
-    input?.setSelectionRange(input.value.length, input.value.length);
+    refreshSuggestionsSoon();
   });
 
-  root.querySelectorAll("[data-add-po]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const poNumber = button.dataset.addPo;
-      const master = store.state.poMaster.find((po) => po.po_number === poNumber);
-      form.pos.push({
-        po_number: poNumber,
-        vendor_name: master?.vendor_name || "",
-        request_quantity: master?.request_quantity || 0,
-        count_sku: master?.count_sku || 0,
-        is_manual: false,
-      });
-      if (!form.vendor && master?.vendor_name) form.vendor = master.vendor_name;
-      form.poQuery = "";
-      rerender();
-    });
-  });
+  bindSuggestions(root);
 
   root.querySelector("#add-manual-po")?.addEventListener("click", () => {
     const poNumber = form.manualPo.trim().toUpperCase();
@@ -357,6 +407,33 @@ function bindEvents(root) {
 /* --------------------------------------------------------------------------
  * Kirim
  * ----------------------------------------------------------------------- */
+/**
+ * Tombol saran dipasang ulang setiap kali isi kotaknya berganti.
+ *
+ * Dipisahkan dari bindEvents() karena hanya bagian inilah yang benar-benar
+ * berubah saat operator mengetik.
+ */
+function bindSuggestions(root) {
+  root.querySelectorAll("[data-add-po]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const poNumber = button.dataset.addPo;
+      const master = store.state.poMaster.find((po) => po.po_number === poNumber);
+      form.pos.push({
+        po_number: poNumber,
+        vendor_name: master?.vendor_name || "",
+        request_quantity: master?.request_quantity || 0,
+        count_sku: master?.count_sku || 0,
+        is_manual: false,
+      });
+      if (!form.vendor && master?.vendor_name) form.vendor = master.vendor_name;
+      form.poQuery = "";
+      // Menambahkan PO mengubah daftar chip di atas kotak saran, jadi di sini
+      // halaman memang perlu digambar ulang.
+      render(root);
+    });
+  });
+}
+
 function validate() {
   const plate = normalizePlate(form.plate.prefix, form.plate.number, form.plate.suffix);
   if (!form.arrivedAt) return "Jam kedatangan wajib diisi.";

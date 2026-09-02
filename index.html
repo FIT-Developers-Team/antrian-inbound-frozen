@@ -12,9 +12,13 @@
     <meta name="theme-color" content="#f4f7fb" media="(prefers-color-scheme: light)" />
     <meta name="color-scheme" content="light dark" />
 
+    <!-- API berada di origin yang sama, jadi tidak ada host backend yang perlu
+         dihangatkan lebih dulu. Preconnect ke proyek Supabase lama masih
+         terpasang lama setelah backendnya dipensiunkan: satu sambungan TLS
+         penuh, dibuka pada setiap muat halaman, ke host yang tidak pernah lagi
+         dihubungi. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="preconnect" href="https://qiafoaoslnbmtsbnmqou.supabase.co" />
     <link
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&family=Inconsolata:wght@400;700&display=swap"
@@ -23,7 +27,7 @@
     <link rel="icon" type="image/png" href="assets/login-logo.png" />
     <link rel="apple-touch-icon" href="assets/login-logo.png" />
     <link rel="preload" as="image" href="assets/login-banner.webp" type="image/webp" />
-    <link rel="stylesheet" href="style.css?v=28.0" />
+    <link rel="stylesheet" href="style.css?v=29.0" />
 
     <script>
       /* Tema dipasang sebelum paint pertama supaya tidak ada kedipan putih di
@@ -52,6 +56,6 @@
       <p>Menyiapkan Antrian Inbound Frozen…</p>
     </div>
 
-    <script type="module" src="js/app.js?v=28.0"></script>
+    <script type="module" src="js/app.js?v=29.0"></script>
   </body>
 </html>

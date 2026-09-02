@@ -20,9 +20,10 @@ export const BRAND_FULL = "Antrian Inbound Frozen";
 export const BRAND_SHORT = "Inbound Frozen";
 
 /**
- * Selalu same-origin. Baik `npm run dev` maupun kontainer `web` memproksikan
- * jalur ini ke API, sehingga pengembangan dan produksi berperilaku sama dan
- * tidak ada URL backend yang tertanam di kode browser.
+ * Selalu same-origin. Proses yang sama menyajikan halaman dan melayani jalur
+ * ini, sehingga pengembangan dan produksi berperilaku sama, tidak ada URL
+ * backend yang tertanam di kode browser, dan tidak ada proxy di antaranya yang
+ * bisa hidup sendirian tanpa API di belakangnya.
  */
 export const BACKEND_URL = API_PROXY_PATH;
 

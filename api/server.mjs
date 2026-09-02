@@ -22,6 +22,9 @@ import { dirname, join } from "node:path";
 import pg from "pg";
 
 import { createStaticHandler } from "./static.mjs";
+import { MIN_COMPRESS_BYTES, compress, negotiateEncoding } from "./compress.mjs";
+import { clientKey, createRateLimiter } from "./ratelimit.mjs";
+import { SECURITY_HEADERS, transportHeaders } from "./headers.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.PORT) || 8080;
@@ -60,15 +63,48 @@ async function rpc(name, args = []) {
  */
 async function applySchema() {
   const sql = await readFile(join(ROOT, "db", "schema.sql"), "utf8");
-  await pool.query(sql);
-  console.log("[db] skema diterapkan");
+  const client = await pool.connect();
+  try {
+    // Kunci penasihat tingkat sesi: bila kelak ada lebih dari satu replika,
+    // dua proses yang start bersamaan akan saling menimpa `drop trigger` /
+    // `create trigger` dan salah satunya mati dengan galat yang membingungkan.
+    // Yang kedua di sini cukup menunggu, lalu menerapkan skema yang sama.
+    await client.query("select pg_advisory_lock($1)", [SCHEMA_LOCK_ID]);
+    await client.query(sql);
+    console.log("[db] skema diterapkan");
+  } finally {
+    await client.query("select pg_advisory_unlock($1)", [SCHEMA_LOCK_ID]).catch(() => {});
+    client.release();
+  }
 }
+
+/** Angka tetap sembarang; yang penting sama di setiap proses. */
+const SCHEMA_LOCK_ID = 728_417_301;
 
 /* --------------------------------------------------------------------------
  * Sesi bertanda tangan
  * ----------------------------------------------------------------------- */
 const AUTH_SECRET = process.env.INBOUND_AUTH_SECRET || "";
 const SESSION_HOURS = 12;
+
+/**
+ * Panjang minimum kunci penanda tangan.
+ *
+ * Ini bukan kerewelan. `createHmac("sha256", "")` adalah HMAC yang sah dengan
+ * kunci kosong: bila INBOUND_AUTH_SECRET tidak diset, SIAPA PUN dapat menyusun
+ * token sesi berperan DEVELOPER sendiri dan memakainya pada setiap aksi tulis,
+ * tanpa pernah menyentuh layar masuk. Karena itu proses menolak start alih-alih
+ * berjalan dengan lubang yang tidak terlihat dari mana pun.
+ */
+const MIN_SECRET_LENGTH = 16;
+
+export function authSecretProblem(secret = AUTH_SECRET) {
+  if (!secret) return "INBOUND_AUTH_SECRET belum diset; token sesi tidak dapat ditandatangani.";
+  if (secret.length < MIN_SECRET_LENGTH) {
+    return `INBOUND_AUTH_SECRET terlalu pendek (${secret.length} karakter, minimal ${MIN_SECRET_LENGTH}).`;
+  }
+  return "";
+}
 
 function base64Url(buffer) {
   return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
@@ -212,29 +248,82 @@ function canUseAction(session, action) {
 /* --------------------------------------------------------------------------
  * HTTP
  * ----------------------------------------------------------------------- */
+/**
+ * Header keamanan untuk satu respons.
+ *
+ * HSTS bergantung pada permintaannya (hanya dipasang di atas HTTPS), jadi ia
+ * disimpan pada objek respons saat permintaan masuk alih-alih diteruskan
+ * melalui setiap pemanggil `send()` di berkas ini.
+ */
+function securityHeadersFor(response) {
+  return { ...SECURITY_HEADERS, ...(response.__transportHeaders || {}) };
+}
+
 function send(response, status, body, headers = {}) {
   const payload = status === 204 || status === 304 ? null : JSON.stringify(body);
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
+    ...securityHeadersFor(response),
     ...headers,
   });
   response.end(payload);
 }
 
+/**
+ * Respons JSON yang dikompresi bila layak dan bila klien menerimanya.
+ *
+ * Snapshot papan adalah payload terbesar aplikasi ini dan ia diminta ulang tiap
+ * lima belas detik oleh setiap tablet yang menyala. Seratus tiket menghasilkan
+ * sekitar 120 KB JSON; gzip memampatkannya ke belasan KB. Siklus yang tidak
+ * membawa perubahan tetap dijawab 304 tanpa body sama sekali — kompresi hanya
+ * mengurusi siklus yang memang harus mengirim sesuatu.
+ */
+async function sendJson(request, response, status, body, headers = {}) {
+  const payload = Buffer.from(JSON.stringify(body), "utf8");
+  const encoding = payload.length >= MIN_COMPRESS_BYTES ? negotiateEncoding(request) : null;
+
+  if (!encoding) return send(response, status, body, headers);
+
+  let compressed;
+  try {
+    compressed = await compress(payload, encoding);
+  } catch (error) {
+    // Kompresi yang gagal tidak boleh menggagalkan permintaan; kirim apa adanya.
+    console.warn("[api] kompresi gagal", error.message);
+    return send(response, status, body, headers);
+  }
+
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    "content-encoding": encoding,
+    "content-length": compressed.length,
+    vary: "Accept-Encoding",
+    ...securityHeadersFor(response),
+    ...headers,
+  });
+  response.end(compressed);
+}
+
+const MAX_BODY_BYTES = 1_000_000;
+
+class PayloadTooLarge extends Error {}
+
 async function readBody(request) {
   if (request.method !== "POST") return {};
   const chunks = [];
+  let size = 0;
   for await (const chunk of request) {
+    // Total berjalan, bukan penjumlahan ulang seluruh potongan pada setiap
+    // potongan: yang terakhir itu kuadratik, sehingga unggahan besar justru
+    // membakar CPU tepat pada permintaan yang seharusnya ditolak cepat.
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) throw new PayloadTooLarge("Payload terlalu besar.");
     chunks.push(chunk);
-    // Payload API ini selalu kecil; batas ini menahan permintaan yang jelas
-    // tidak masuk akal agar tidak menghabiskan memori proses.
-    if (chunks.reduce((sum, part) => sum + part.length, 0) > 1_000_000) {
-      throw new Error("Payload terlalu besar.");
-    }
   }
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+    return JSON.parse(Buffer.concat(chunks, size).toString("utf8") || "{}");
   } catch {
     return {};
   }
@@ -251,8 +340,34 @@ function fingerprinted(request, response, payload, extra = {}) {
   if (seen && seen.split(",").some((candidate) => candidate.trim() === etag)) {
     return send(response, 304, null, { etag });
   }
-  return send(response, 200, { ok: true, data: payload }, { etag, ...extra });
+  return sendJson(request, response, 200, { ok: true, data: payload }, { etag, ...extra });
 }
+
+/* --------------------------------------------------------------------------
+ * Pembatas laju
+ *
+ * Dua lapis, karena keduanya menjawab serangan yang berbeda. Batas per alamat
+ * menahan satu mesin yang menebak banyak akun; batas per username menahan
+ * banyak mesin yang menebak satu akun — dan yang kedua itu justru bentuk
+ * serangan yang lolos dari batas per alamat.
+ *
+ * ANGKANYA TIMPANG DENGAN SENGAJA. Seluruh tablet gudang berada di balik satu
+ * gateway, jadi bagi pembatas ini mereka adalah SATU alamat. Batas per alamat
+ * yang ketat berarti pergantian shift yang ricuh — beberapa operator salah
+ * ketik berturut-turut — mengunci seluruh gudang dari papan antreannya sendiri,
+ * dan itu kerugian operasional yang nyata untuk melawan serangan yang tidak
+ * nyata.
+ *
+ * Yang benar-benar menahan penebakan sandi adalah batas per akun: sepuluh
+ * percobaan per lima menit berarti paling banyak seratus dua puluh tebakan per
+ * jam untuk satu akun, berapa pun jumlah mesin yang mencoba. Batas per alamat
+ * tinggal menjadi jaring pengaman terhadap banjir permintaan.
+ * ----------------------------------------------------------------------- */
+const loginByAddress = createRateLimiter({ limit: 60, windowMs: 5 * 60_000 });
+const loginByUsername = createRateLimiter({ limit: 10, windowMs: 5 * 60_000 });
+
+/** Diagnostik terbuka; longgar, tetapi tetap berbatas. */
+const diagnosticLimiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
 
 const TICKET_RPC = {
   set_arrival: "inbound_set_arrival",
@@ -265,6 +380,7 @@ const TICKET_RPC = {
 async function handle(request, response) {
   const url = new URL(request.url, `http://localhost:${PORT}`);
   const path = url.pathname;
+  response.__transportHeaders = transportHeaders(request);
 
   // Health check untuk platform. Sengaja tidak menyentuh database: proses ini
   // sehat selama ia dapat menjawab, dan database yang bermasalah punya
@@ -282,15 +398,43 @@ async function handle(request, response) {
   const action = String(url.searchParams.get("action") || body.action || "").toLowerCase();
 
   // ---- Terbuka -------------------------------------------------------------
-  if (request.method === "GET" && action === "health") {
-    return send(response, 200, { ok: true, ...(await rpc("inbound_health")) });
-  }
-
-  if (request.method === "GET" && action === "auth_status") {
+  // Keduanya sengaja tidak memerlukan sesi: `npm run doctor` justru dipakai
+  // ketika tidak ada yang bisa masuk, dan diagnostik yang butuh login tidak
+  // berguna tepat pada saat ia paling dibutuhkan. Isinya tidak memuat username
+  // maupun sandi — tetapi keduanya menyentuh database, jadi tetap dibatasi.
+  if (request.method === "GET" && (action === "health" || action === "auth_status")) {
+    const limited = diagnosticLimiter.check(clientKey(request));
+    if (!limited.allowed) {
+      return send(
+        response,
+        429,
+        { ok: false, message: "Terlalu banyak permintaan diagnostik." },
+        { "retry-after": String(limited.retryAfterSeconds) },
+      );
+    }
+    if (action === "health") return send(response, 200, { ok: true, ...(await rpc("inbound_health")) });
     return send(response, 200, { ok: true, data: authStatus() });
   }
 
   if (request.method === "POST" && action === "login") {
+    const address = clientKey(request);
+    const username = String(body.username || "").trim().toLowerCase();
+    const byAddress = loginByAddress.check(address);
+    const byUsername = username ? loginByUsername.check(username) : { allowed: true, retryAfterSeconds: 0 };
+    if (!byAddress.allowed || !byUsername.allowed) {
+      const retry = Math.max(byAddress.retryAfterSeconds, byUsername.retryAfterSeconds);
+      console.warn(`[auth] percobaan masuk dibatasi untuk ${address}`);
+      return send(
+        response,
+        429,
+        {
+          ok: false,
+          message: `Terlalu banyak percobaan masuk. Coba lagi dalam ${retry} detik.`,
+        },
+        { "retry-after": String(retry) },
+      );
+    }
+
     let session;
     try {
       session = authenticate(body);
@@ -304,12 +448,15 @@ async function handle(request, response) {
       throw error;
     }
     if (!session) return send(response, 401, { ok: false, message: "Username atau password salah." });
-    if (!AUTH_SECRET) {
-      return send(response, 503, {
-        ok: false,
-        message: "INBOUND_AUTH_SECRET belum diset; token sesi tidak dapat ditandatangani.",
-      });
-    }
+
+    const secretProblem = authSecretProblem();
+    if (secretProblem) return send(response, 503, { ok: false, message: secretProblem });
+
+    // Sandi yang benar menghapus riwayat gagal, sehingga operator yang salah
+    // ketik beberapa kali tidak terkunci sisa shift-nya.
+    loginByAddress.reset(address);
+    loginByUsername.reset(username);
+
     return send(response, 200, {
       ok: true,
       data: {
@@ -333,7 +480,7 @@ async function handle(request, response) {
     const { rows } = await pool.query(
       "select site_code, location_id, site_name, short_name, gate_prefix, gate_count, active, sort_order from site_master order by sort_order",
     );
-    return send(response, 200, { ok: true, data: rows });
+    return sendJson(request, response, 200, { ok: true, data: rows });
   }
 
   if (request.method === "GET" && action === "board") {
@@ -347,7 +494,7 @@ async function handle(request, response) {
   }
 
   if (request.method === "GET" && action === "history") {
-    return send(response, 200, {
+    return sendJson(request, response, 200, {
       ok: true,
       data: await rpc("inbound_history", [
         site,
@@ -371,7 +518,7 @@ async function handle(request, response) {
       return send(response, 304, null, { etag });
     }
     const payload = await rpc("inbound_po_master", [site]);
-    return send(response, 200, { ok: true, data: payload }, {
+    return sendJson(request, response, 200, { ok: true, data: payload }, {
       etag: weakEtag(payload?.fingerprint || fingerprint),
       "x-inbound-rows": String(payload?.total ?? 0),
     });
@@ -393,9 +540,11 @@ async function handle(request, response) {
   }
 
   if (request.method === "POST" && action === "delete_tickets_by_date") {
+    // Kode gudang ikut dikirim: tanpa itu penghapusan menyapu seluruh gudang
+    // pada tanggal tersebut, bukan hanya gudang yang sedang dilihat operator.
     return send(response, 200, {
       ok: true,
-      data: await rpc("inbound_delete_tickets_by_date", [body.operational_date]),
+      data: await rpc("inbound_delete_tickets_by_date", [body.operational_date, site]),
     });
   }
 
@@ -412,26 +561,93 @@ async function handle(request, response) {
 /* --------------------------------------------------------------------------
  * Bootstrap
  * ----------------------------------------------------------------------- */
+/**
+ * Memilah galat yang boleh dibaca operator dari galat yang tidak boleh.
+ *
+ * Aturan yang ditulis di db/schema.sql memakai `raise exception`, dan Postgres
+ * menandainya dengan SQLSTATE P0001. Pesan-pesan itu memang ditulis untuk
+ * dibaca di layar gudang ("Gate wajib ditentukan saat memanggil driver"), jadi
+ * diteruskan apa adanya.
+ *
+ * Sisanya — kegagalan koneksi, pelanggaran constraint, galat sintaks — bukan
+ * hanya tidak berguna bagi operator; ia menyebut nama host, nama tabel, dan
+ * potongan kueri kepada siapa pun yang meminta. Yang itu berhenti di log.
+ */
+function clientSafeMessage(error) {
+  if (error instanceof PayloadTooLarge) return error.message;
+  if (error?.code === "P0001") return error.message;
+  return "Kesalahan server. Hubungi admin bila berulang.";
+}
+
 const server = createServer((request, response) => {
   handle(request, response).catch((error) => {
-    // Pesan galat Postgres sudah ditulis untuk operator (mis. "Gate wajib
-    // ditentukan"), jadi diteruskan apa adanya; jejak tumpukan tetap di log.
-    console.error("[api]", request.url, error.message);
-    send(response, 500, { ok: false, message: error.message || "Kesalahan server." });
+    console.error("[api]", request.url, error.code || "", error.message);
+    if (response.headersSent) return response.destroy();
+    const status = error instanceof PayloadTooLarge ? 413 : 500;
+    send(response, status, { ok: false, message: clientSafeMessage(error) });
   });
 });
+
+/**
+ * Batas waktu permintaan.
+ *
+ * Bawaan Node membiarkan koneksi yang menggantung hidup tanpa batas. Di
+ * jaringan gudang koneksi memang kerap putus di tengah jalan — tablet berpindah
+ * access point, forklift lewat — dan tanpa batas ini setiap kejadian semacam
+ * itu meninggalkan socket yang tidak pernah ditutup.
+ */
+server.requestTimeout = 30_000;
+server.headersTimeout = 20_000;
+// Sedikit lebih panjang dari idle timeout proxy pada umumnya, supaya proxy yang
+// menutup lebih dulu dan bukan server — race itulah yang memunculkan 502 acak.
+server.keepAliveTimeout = 72_000;
 
 async function start() {
   if (!process.env.DATABASE_URL) {
     console.error("DATABASE_URL belum diset.");
     process.exit(1);
   }
+
+  // Kunci sesi diperiksa SEBELUM socket dibuka, bukan saat login pertama.
+  // Aplikasi yang menyala dengan kunci kosong menerima token sesi yang
+  // ditandatangani siapa pun; lebih baik tidak menyala sama sekali.
+  const secretProblem = authSecretProblem();
+  if (secretProblem) {
+    console.error(`[auth] ${secretProblem}`);
+    console.error("[auth] Buat satu dengan: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"");
+    process.exit(1);
+  }
+
   await applySchema();
 
   const { startSupersetSync } = await import("./sync-superset.mjs");
   startSupersetSync(pool);
+  startHistoryPruning();
 
   server.listen(PORT, () => console.log(`[api] mendengarkan di :${PORT}`));
+}
+
+/**
+ * Pemangkasan riwayat harian.
+ *
+ * `sync_runs` bertambah dua belas baris tiap jam dan hanya baris terakhirnya
+ * yang pernah dibaca. Tanpa pemangkasan ia tumbuh selamanya, dan kueri
+ * "sinkronisasi terakhir" di setiap snapshot papan makin lama makin mahal.
+ */
+function startHistoryPruning() {
+  const prune = () =>
+    rpc("inbound_prune_history")
+      .then((result) => {
+        const runs = result?.sync_runs_deleted ?? 0;
+        const events = result?.ticket_events_deleted ?? 0;
+        if (runs || events) console.log(`[db] pangkas riwayat: ${runs} sync_runs, ${events} ticket_events`);
+      })
+      .catch((error) => console.warn("[db] pemangkasan gagal", error.message));
+
+  // Sekali saat start, lalu sekali sehari. Bukan pekerjaan yang mendesak, jadi
+  // ia tidak boleh menahan proses tetap hidup saat shutdown.
+  prune();
+  setInterval(prune, 24 * 3600_000).unref?.();
 }
 
 /** Menutup koneksi dengan rapi supaya deploy ulang tidak memutus permintaan. */

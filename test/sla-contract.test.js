@@ -56,10 +56,22 @@ test("tabel acuan di layar Pengaturan cocok dengan aturan database", async () =>
     assert.equal(entry.slaHours, hours, `target SLA ${fleet} harus ${hours} jam`);
   });
 
-  assert.match(sql, /when f = 'RODA 2'\s+then 1/, "RODA 2 = 1 jam di database");
-  assert.match(sql, /when f in \('VAN', 'PICKUP', 'MOBIL', 'L300 BOX'\) then 2/, "kelompok 2 jam");
-  assert.match(sql, /when f in \('TRONTON\/FUSO', 'WING BOX'\)\s+then 4/, "kelompok 4 jam");
-  assert.match(sql, /when f = 'DROP-OFF'\s+then 23/, "DROP-OFF = 23 jam");
+  // Bentuknya memakai pemanggilan fungsi berulang, bukan alias `f` dari sebuah
+  // klausa `from`: klausa itulah yang membuat Postgres menolak menyisipkan
+  // fungsi ini ke kueri pemanggilnya, dan tanpa penyisipan satu snapshot papan
+  // pada dua puluh ribu tiket memakan 25 detik.
+  // Spasi dirapatkan lebih dulu supaya perataan kolom di SQL boleh berubah
+  // tanpa membuat test ini gagal karena alasan yang bukan soal aturan SLA.
+  const flat = sql.replace(/\s+/g, " ");
+  const canonical = "inbound_fleet_canonical(p_fleet)";
+  [
+    [`when ${canonical} = 'RODA 2' then 1`, "RODA 2 = 1 jam di database"],
+    [`when ${canonical} in ('VAN', 'PICKUP', 'MOBIL', 'L300 BOX') then 2`, "kelompok 2 jam"],
+    [`when ${canonical} in ('TRONTON/FUSO', 'WING BOX') then 4`, "kelompok 4 jam"],
+    [`when ${canonical} = 'DROP-OFF' then 23`, "DROP-OFF = 23 jam"],
+  ].forEach(([clause, message]) => {
+    assert.ok(flat.includes(clause), `${message} — tidak ditemukan: ${clause}`);
+  });
 });
 
 test("aturan SKU CDD memakai batas lebih dari 40", () => {
