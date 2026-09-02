@@ -27,7 +27,39 @@
     <link rel="icon" type="image/png" href="assets/login-logo.png" />
     <link rel="apple-touch-icon" href="assets/login-logo.png" />
     <link rel="preload" as="image" href="assets/login-banner.webp" type="image/webp" />
-    <link rel="stylesheet" href="style.css?v=30.0" />
+    <link rel="stylesheet" href="style.css?v=31.0" />
+
+    <!--
+      Modul di-preload semuanya sekaligus.
+
+      Tanpa baris-baris ini browser menemukan modul SATU TINGKAT PADA SATU
+      WAKTU: ia mengunduh app.js, menguraikannya, baru tahu bahwa ia butuh
+      pages/board.js; mengunduh itu, menguraikannya, baru tahu ia butuh
+      queue-card.js; dan seterusnya. Grafik impor aplikasi ini dalam enam
+      tingkat, jadi itu enam perjalanan pulang-pergi BERURUTAN sebelum satu
+      piksel pun tergambar — di Wi-Fi gudang, hampir setengah detik yang
+      dihabiskan hanya untuk menunggu giliran.
+
+      `modulepreload` memberi tahu browser seluruh daftarnya di muka, sehingga
+      keenam belas berkas diunduh bersamaan. Urutan di bawah mengikuti
+      kedalaman: yang paling dalam lebih dulu, karena itu yang paling lama
+      menahan sisanya.
+    -->
+    <link rel="modulepreload" href="js/deployment.js" />
+    <link rel="modulepreload" href="js/config.js" />
+    <link rel="modulepreload" href="js/format.js" />
+    <link rel="modulepreload" href="js/api.js" />
+    <link rel="modulepreload" href="js/sla.js" />
+    <link rel="modulepreload" href="js/ui.js" />
+    <link rel="modulepreload" href="js/store.js" />
+    <link rel="modulepreload" href="js/theme.js" />
+    <link rel="modulepreload" href="js/charts.js" />
+    <link rel="modulepreload" href="js/pages/queue-card.js" />
+    <link rel="modulepreload" href="js/pages/board.js" />
+    <link rel="modulepreload" href="js/pages/register.js" />
+    <link rel="modulepreload" href="js/pages/report.js" />
+    <link rel="modulepreload" href="js/pages/analytics.js" />
+    <link rel="modulepreload" href="js/pages/settings.js" />
 
     <script>
       /* Tema dipasang sebelum paint pertama supaya tidak ada kedipan putih di
@@ -56,6 +88,6 @@
       <p>Menyiapkan Antrian Inbound Frozen…</p>
     </div>
 
-    <script type="module" src="js/app.js?v=30.0"></script>
+    <script type="module" src="js/app.js?v=31.0"></script>
   </body>
 </html>

@@ -539,7 +539,42 @@ returns jsonb language sql stable as $$
                                  - greatest(least(coalesce(p_days_back, 2), 30), 0)
   ),
   payload as (
-    select coalesce(jsonb_agg(to_jsonb(scoped) order by scoped.created_at desc), '[]'::jsonb) as rows,
+    -- Kolom disebut satu per satu, TIDAK memakai to_jsonb(scoped).
+    --
+    -- `to_jsonb` atas seluruh baris view mengirim ketiga puluh tiga kolomnya,
+    -- dan sebelas di antaranya tidak pernah dibaca satu baris kode UI pun:
+    -- slot, po_count, called_at, created_at, updated_at, expired_at,
+    -- ticket_type, registered_by, row_updated_at, done_unloading_at, dan
+    -- source. Terukur pada papan dua hari: 36% muatan baris terbuang untuk
+    -- kolom yang langsung dibuang penerimanya.
+    --
+    -- Kolom-kolom itu tetap dihitung view — fingerprint memakai row_updated_at,
+    -- dan sla_stopped_at diturunkan dari done_unloading_at. Yang berhenti di
+    -- sini hanyalah pengirimannya lewat jaringan.
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'ticket_id', ticket_id,
+             'queue_no', queue_no,
+             'status', status,
+             'site_code', site_code,
+             'vendor_name', vendor_name,
+             'fleet_type', fleet_type,
+             'plat_number', plat_number,
+             'driver_name', driver_name,
+             'driver_phone', driver_phone,
+             'gate', gate,
+             'operational_date', operational_date,
+             'arrived_at', arrived_at,
+             'call_count', call_count,
+             'start_unloading_at', start_unloading_at,
+             'expired_reason', expired_reason,
+             'po_numbers', po_numbers,
+             'total_qty', total_qty,
+             'total_sku', total_sku,
+             'sla_target_hours', sla_target_hours,
+             'sla_deadline_at', sla_deadline_at,
+             'sla_started_at', sla_started_at,
+             'sla_stopped_at', sla_stopped_at
+           ) order by created_at desc), '[]'::jsonb) as rows,
            count(*)::int as row_count,
            max(scoped.row_updated_at) as max_updated_at
       from scoped
@@ -1246,4 +1281,95 @@ returns jsonb language sql stable as $fn$
     'by_hour', by_hour.payload,
     'unload_buckets', buckets.payload
   ) from overall, by_day, by_fleet, by_hour, buckets;
+$fn$;
+
+-- ---------------------------------------------------------------------------
+-- 20. Pencarian master PO
+--
+-- Layar pendaftaran dulu mengunduh SELURUH master PO dan menyaringnya di
+-- tablet. Pada master PGS seukuran produksi itu berarti 3,4 MB JSON (226 KB
+-- setelah kompresi), hampir satu detik menunggu, dan tiga puluh ribu objek
+-- JavaScript yang menetap di memori tablet — lalu tiga puluh ribu string huruf
+-- besar lagi untuk indeks pencariannya.
+--
+-- Semua itu untuk menjawab pertanyaan yang jawabannya tidak pernah lebih dari
+-- delapan baris: "PO mana yang cocok dengan yang saya ketik".
+--
+-- Postgres sudah punya alat yang tepat. Index trigram membuat pencarian
+-- substring ILIKE berjalan lewat index alih-alih memindai tabel, dan yang
+-- menyeberang jaringan tinggal delapan baris.
+-- ---------------------------------------------------------------------------
+create extension if not exists pg_trgm;
+
+create index if not exists superset_po_number_trgm_idx
+  on superset_po_master using gin (po_number gin_trgm_ops);
+create index if not exists superset_po_vendor_trgm_idx
+  on superset_po_master using gin (vendor_name gin_trgm_ops);
+
+/**
+ * Mencari PO menurut nomor atau nama vendor.
+ *
+ * Hasil diurutkan supaya yang paling mungkin dimaksud muncul lebih dulu:
+ * kecocokan awalan nomor PO mengalahkan kecocokan di tengah, dan keduanya
+ * mengalahkan kecocokan pada nama vendor. Operator yang mengetik "PO0012"
+ * hampir selalu memaksudkan nomor, bukan vendor yang kebetulan memuat
+ * potongan itu.
+ */
+create or replace function inbound_po_search(
+  p_site_code text default null,
+  p_query text default '',
+  p_limit integer default 8
+)
+returns jsonb language sql stable as $fn$
+  with needle as (select upper(btrim(coalesce(p_query, ''))) as q)
+  select coalesce(jsonb_agg(row order by rank, po_number), '[]'::jsonb)
+    from (
+      select
+        jsonb_build_object(
+          'po_number', m.po_number,
+          'vendor_name', m.vendor_name,
+          'request_quantity', m.request_quantity,
+          'count_sku', m.count_sku,
+          'po_status', m.po_status
+        ) as row,
+        m.po_number,
+        case
+          when upper(m.po_number) like n.q || '%' then 1
+          when upper(m.po_number) like '%' || n.q || '%' then 2
+          else 3
+        end as rank
+      from superset_po_master m
+      join site_master s on s.location_id = m.location_id and s.active
+      cross join needle n
+     where n.q <> ''
+       and s.site_code = any(inbound_scoped_sites(p_site_code))
+       and (m.po_number ilike '%' || n.q || '%' or m.vendor_name ilike '%' || n.q || '%')
+     order by rank, m.po_number
+     limit greatest(least(coalesce(p_limit, 8), 25), 1)
+    ) hits;
+$fn$;
+
+/**
+ * Memastikan satu nomor PO benar-benar ada di master gudang aktif.
+ *
+ * Dipakai layar pendaftaran sebelum mengirim tiket: tanpa master lengkap di
+ * tablet, keberadaan sebuah PO tidak lagi dapat diperiksa secara lokal.
+ * Server tetap memeriksanya sekali lagi saat tiket dibuat — ini hanya supaya
+ * operator tahu lebih awal, bukan setelah menekan Simpan.
+ */
+create or replace function inbound_po_lookup(p_site_code text default null, p_po_number text default '')
+returns jsonb language sql stable as $fn$
+  select coalesce(
+    (select jsonb_build_object(
+       'po_number', m.po_number,
+       'vendor_name', m.vendor_name,
+       'request_quantity', m.request_quantity,
+       'count_sku', m.count_sku,
+       'po_status', m.po_status)
+       from superset_po_master m
+       join site_master s on s.location_id = m.location_id and s.active
+      where s.site_code = any(inbound_scoped_sites(p_site_code))
+        and upper(m.po_number) = upper(btrim(coalesce(p_po_number, '')))
+      limit 1),
+    'null'::jsonb);
 $fn$;

@@ -101,6 +101,22 @@ function summarize(rows) {
 /* --------------------------------------------------------------------------
  * Penyaringan
  * ----------------------------------------------------------------------- */
+
+/**
+ * Menyebutkan filter yang sedang aktif.
+ *
+ * Filter yang terlipat tidak boleh menyembunyikan keadaan: papan yang
+ * menampilkan tiga tiket karena disaring terlihat persis seperti papan yang
+ * memang hanya punya tiga tiket, dan selisih itu adalah selisih antara "sepi"
+ * dan "ada yang tidak Anda lihat".
+ */
+function filterSummary() {
+  const parts = [];
+  if (filters.status !== "AKTIF") parts.push(statusMeta(filters.status).label);
+  if (filters.gate) parts.push(gateLabel(filters.gate));
+  return parts.length ? parts.join(" · ") : "Semua aktif";
+}
+
 function applyFilters(rows) {
   const query = filters.query.trim().toLowerCase();
   return rows.filter((row) => {
@@ -206,14 +222,36 @@ export function render(root) {
         <input class="input" type="search" id="board-query" placeholder="Nomor antrean, vendor, plat, PO"
                value="${esc(filters.query)}" />
       </label>
-      <label>
-        <span>Status</span>
-        <select class="input" id="board-status">${statusOptions}</select>
-      </label>
-      <label>
-        <span>Gate</span>
-        <select class="input" id="board-gate">${gateOptionsHtml}</select>
-      </label>
+
+      <!--
+        Status dan gate berada di dalam disclosure.
+
+        Di layar lebar CSS memaksanya terbuka dan sejajar, persis seperti
+        sebelumnya. Di ponsel ia terlipat: bilah filter yang selalu terbuka
+        memakan 192 piksel — hampir seperempat layar — untuk dua medan yang
+        pada sebagian besar shift tidak pernah disentuh, sementara yang
+        dicari operator justru tiket di bawahnya.
+
+        Ringkasan pada ringkasannya menyebutkan filter yang sedang aktif,
+        sehingga menutupnya tidak pernah menyembunyikan keadaan.
+      -->
+      <details class="filter-more"${filters.status !== "AKTIF" || filters.gate ? " open" : ""}>
+        <summary>
+          <span>Filter</span>
+          <b id="board-filter-summary">${esc(filterSummary())}</b>
+        </summary>
+        <div class="filter-more-body">
+          <label>
+            <span>Status</span>
+            <select class="input" id="board-status">${statusOptions}</select>
+          </label>
+          <label>
+            <span>Gate</span>
+            <select class="input" id="board-gate">${gateOptionsHtml}</select>
+          </label>
+        </div>
+      </details>
+
       <div class="table-actions">
         <span class="chip" id="board-count">${visible.length} tiket</span>
       </div>
@@ -297,20 +335,32 @@ function bindEvents(root) {
     filterList();
   });
 
+  const syncFilterSummary = () => {
+    const summary = root.querySelector("#board-filter-summary");
+    if (summary) summary.textContent = filterSummary();
+  };
+
   root.querySelector("#board-status")?.addEventListener("change", (event) => {
     filters.status = event.target.value;
+    syncFilterSummary();
     renderList(root);
   });
 
   root.querySelector("#board-gate")?.addEventListener("change", (event) => {
     filters.gate = event.target.value;
+    syncFilterSummary();
     renderList(root);
   });
 
   root.querySelector('[data-action="refresh"]')?.addEventListener("click", (event) =>
-    // Penarikan manual selalu menggambar ulang papan, bahkan bila sidik jarinya
-    // tidak berubah: operator yang menekan tombol berhak melihat buktinya.
-    withBusy(event.currentTarget, () => store.refresh()),
+    // Penarikan manual MENGABAIKAN cache dan selalu menggambar ulang papan.
+    // Operator yang menekan tombol ini sedang menyatakan bahwa ia tidak percaya
+    // apa yang dilihatnya; menjawabnya dengan 304 membuat tombolnya terasa
+    // rusak.
+    withBusy(event.currentTarget, async () => {
+      await store.forceRefresh();
+      toast("Papan ditarik ulang dari server.");
+    }),
   );
 
   bindTicketActions(root);

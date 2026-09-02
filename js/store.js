@@ -23,7 +23,6 @@ export const state = {
   rows: [],
   gates: [],
   checkers: [],
-  poMaster: [],
   operationalDate: "",
   /**
    * Kesegaran rantai Superset (PGS 160) → superset_po_master, dikirim server
@@ -120,6 +119,24 @@ function setConnection(mode) {
  * sesaat hanya menurunkan indikator koneksi, tidak mengosongkan layar yang
  * sedang dipakai operator.
  */
+/**
+ * Menarik ulang dengan MENGABAIKAN cache.
+ *
+ * `refresh()` biasa mengirim If-None-Match, dan server yang menjawab 304 berarti
+ * layar tidak berubah sama sekali. Itu benar dan hemat — tetapi ketika operator
+ * menekan "Muat ulang", yang ia maksud justru "saya tidak percaya apa yang saya
+ * lihat, ambil ulang dari sumbernya". Menjawabnya dengan 304 membuat tombol itu
+ * terasa rusak, dan itulah keluhan yang benar-benar muncul.
+ *
+ * Karena itu cache ETag dibuang lebih dulu; siklus berikutnya kembali hemat
+ * seperti biasa.
+ */
+export async function forceRefresh() {
+  api.clearEtagCache();
+  state.fingerprint = "";
+  return refresh();
+}
+
 export async function refresh({ silent = false } = {}) {
   if (!silent) state.loading = true;
   let dataChanged = true;
@@ -171,41 +188,6 @@ export async function refresh({ silent = false } = {}) {
  */
 export function resetSnapshot() {
   state.fingerprint = "";
-  state.poMaster = [];
-  poMasterRequest = null;
-}
-
-/**
- * Master PO hanya dibutuhkan layar pendaftaran, jadi dimuat sesuai permintaan.
- *
- * Permintaan yang sedang berjalan disimpan dan dibagikan. Halaman pendaftaran
- * memanggil fungsi ini dari `render()`, dan `render()` berjalan pada setiap
- * ketukan tombol — tanpa penyimpanan ini, mengetik lima huruf sebelum
- * permintaan pertama selesai memicu lima unduhan master PO sekaligus, masing-
- * masing berisi puluhan ribu baris.
- */
-let poMasterRequest = null;
-
-export function ensurePoMaster() {
-  if (state.poMaster.length) return Promise.resolve(state.poMaster);
-  if (poMasterRequest) return poMasterRequest;
-
-  poMasterRequest = api
-    .fetchPoMaster()
-    .then((payload) => {
-      state.poMaster = Array.isArray(payload?.rows) ? payload.rows : [];
-    })
-    .catch((error) => {
-      console.warn("Master PO gagal dimuat", error);
-      state.poMaster = [];
-    })
-    .then(() => {
-      poMasterRequest = null;
-      emit();
-      return state.poMaster;
-    });
-
-  return poMasterRequest;
 }
 
 /* --------------------------------------------------------------------------

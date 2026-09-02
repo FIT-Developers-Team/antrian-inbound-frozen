@@ -377,7 +377,24 @@ export function fetchBoard(daysBack = 2) {
   return apiGet("board", { days_back: daysBack }, { useEtag: true });
 }
 
-/** Master PO untuk layar pendaftaran. Payload besar, jadi selalu ber-ETag. */
+/**
+ * Mencari PO di master, di server.
+ *
+ * Menggantikan pengunduhan master utuh. Pada master PGS seukuran produksi, yang
+ * lama berarti 3,4 MB JSON, hampir satu detik menunggu, dan tiga puluh ribu
+ * objek yang menetap di memori tablet — semuanya untuk menjawab pertanyaan yang
+ * jawabannya tidak pernah lebih dari delapan baris.
+ */
+export function searchPoMaster(query, limit = 8) {
+  return apiGet("po_search", { q: query, limit });
+}
+
+/**
+ * Master PO utuh.
+ *
+ * Tidak lagi dipakai layar pendaftaran; disimpan untuk perkakas yang benar-
+ * benar membutuhkan seluruh isinya. Payloadnya besar, jadi selalu ber-ETag.
+ */
 export function fetchPoMaster() {
   return apiGet("po_master", {}, { useEtag: true });
 }
@@ -424,6 +441,18 @@ export function startUnloading(ticketId, gate) {
 
 export function finishUnloading(ticketId) {
   return apiPost("finish_unloading", { ticket_id: ticketId });
+}
+
+/**
+ * Menarik ulang master PO dari Superset sekarang juga.
+ *
+ * Cookie Superset berumur terbatas dan harus diganti manual. Setelah
+ * menggantinya, menunggu siklus lima menit berikutnya hanya untuk tahu apakah
+ * cookie barunya benar adalah lima menit yang dihabiskan menatap layar yang
+ * belum berubah.
+ */
+export function syncNow() {
+  return apiPost("sync_now");
 }
 
 export function cancelTicket(ticketId, reason) {

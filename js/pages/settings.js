@@ -17,7 +17,7 @@ import {
   setCurrentSite,
 } from "../config.js";
 import { esc, formatDuration, formatFull } from "../format.js";
-import { badge, chip, icon, pageHeader, section, toast } from "../ui.js";
+import { badge, chip, icon, pageHeader, section, toast, withBusy } from "../ui.js";
 import { currentTheme, setTheme } from "../theme.js";
 
 /**
@@ -25,46 +25,115 @@ import { currentTheme, setTheme } from "../theme.js";
  * Keduanya sering disamakan, padahal papan yang "live" sama sekali tidak
  * menjamin master PO masih mengalir dari sumbernya.
  */
+/**
+ * Rantai Superset → Postgres, dipisahkan dari status koneksi papan.
+ *
+ * Keduanya sering disamakan, padahal papan yang "live" sama sekali tidak
+ * menjamin master PO masih mengalir dari sumbernya.
+ *
+ * Bagian ini juga tempat kegagalan tersering ditangani: cookie Superset
+ * berumur terbatas dan harus diganti manual. Sebelumnya kegagalan itu tercatat
+ * sebagai "Superset menjawab HTTP 401" — kalimat yang benar dan tidak memberi
+ * tahu siapa pun apa yang harus dilakukan.
+ */
 function sourceSection() {
   const source = store.state.source;
   const stale = store.sourceIsStale(source);
+  const status = String(source?.last_run_status || "").toUpperCase();
+  const cookieExpired = status === "COOKIE_EXPIRED";
+
+  const action = `<button type="button" class="btn btn-sm" id="sync-now">
+      ${icon("refresh", 15)} Sync sekarang
+    </button>`;
 
   if (!source?.last_synced_at) {
     return section({
       eyebrow: "Sumber data",
       title: "Master PO Superset",
-      body: `<p class="section-note">Belum ada catatan sinkronisasi. Jalankan <code>npm run doctor</code> untuk memeriksa penjadwal dan cookie Superset.</p>`,
+      action,
+      body: `<p class="section-note">Belum ada catatan sinkronisasi. Tekan <strong>Sync sekarang</strong>
+        untuk mencobanya, atau jalankan <code>npm run doctor</code> untuk memeriksa penjadwal dan cookie.</p>
+        <p class="sync-result" id="sync-result" hidden></p>`,
     });
   }
-
-  const runFailed = String(source.last_run_status || "").toUpperCase() === "FAILED";
 
   return section({
     eyebrow: "Sumber data",
     title: "Master PO Superset",
-    action: badge(
-      stale ? "Basi" : runFailed ? "Sync gagal" : "Segar",
-      stale || runFailed ? "critical" : "normal",
-    ),
-    body: `<div class="form-grid">
-        <div class="fact"><span>Location ID</span><strong class="mono">${esc(source.location_id || "-")}</strong></div>
-        <div class="fact"><span>Gudang</span><strong>${esc(source.site_code || "-")}</strong></div>
+    action,
+    body: `${
+      cookieExpired
+        ? `<div class="banner banner-warn" role="alert">
+             <strong>${icon("alert", 18)} Cookie Superset kedaluwarsa</strong>
+             <p>Master PO berhenti diperbarui. Cookie sesi Superset berumur terbatas dan harus diganti manual.</p>
+             <ol class="steps">
+               <li>Masuk ke Superset di browser.</li>
+               <li>Buka DevTools → Application → Cookies, salin nilai cookie <code>session</code>.</li>
+               <li>Tempel ke <code>SUPERSET_SESSION_COOKIE</code> di setelan lingkungan, lalu deploy ulang.</li>
+               <li>Kembali ke sini dan tekan <strong>Sync sekarang</strong> untuk memastikan.</li>
+             </ol>
+           </div>`
+        : ""
+    }
+      <div class="form-grid">
+        <div class="fact"><span>Status</span><strong>${badge(
+          cookieExpired ? "Cookie mati" : stale ? "Basi" : status === "FAILED" ? "Sync gagal" : "Segar",
+          cookieExpired || stale || status === "FAILED" ? "critical" : "normal",
+        )}</strong></div>
         <div class="fact"><span>Total PO</span><strong class="mono">${esc(source.total_po ?? 0)}</strong></div>
         <div class="fact"><span>Sync terakhir</span><strong class="mono">${esc(formatDuration(source.age_seconds))} lalu</strong></div>
+        <div class="fact"><span>Location ID</span><strong class="mono">${esc(source.location_id || "-")}</strong></div>
       </div>
       ${
-        source.last_run_error
+        source.last_run_error && !cookieExpired
           ? `<p class="field-error" style="margin-top:12px">${esc(source.last_run_error)}</p>`
           : ""
       }
       <p class="section-note">
         Penjadwal di dalam proses API menarik ulang master PO tiap lima menit.
         ${
-          stale
-            ? "Sumber sudah lewat lima belas menit — periksa log kontainer dan masa berlaku <code>SUPERSET_SESSION_COOKIE</code>."
-            : "Papan antrean sendiri menarik ulang tiap lima belas detik."
+          stale && !cookieExpired
+            ? "Sumber sudah lewat lima belas menit — tekan Sync sekarang untuk melihat penyebabnya."
+            : "Papan antrean sendiri menerima perubahan seketika lewat saluran langsung."
         }
-      </p>`,
+      </p>
+      <p class="sync-result" id="sync-result" hidden></p>`,
+  });
+}
+
+/**
+ * Panel pembaruan data: satu tempat untuk memaksa tarik ulang.
+ *
+ * Dipisahkan dari sumber data karena keduanya rantai yang berbeda — yang satu
+ * Postgres ke browser, yang lain Superset ke Postgres — dan menyatukannya
+ * adalah persis kekeliruan yang membuat orang mengira papan yang "live"
+ * menjamin master PO ikut segar.
+ */
+function refreshSection() {
+  const { live, lastChange, lastSync } = store.state;
+  const mode =
+    live === "live"
+      ? ["Langsung", "normal", "Perubahan tiba seketika lewat saluran server; papan tidak menunggu siklus."]
+      : live === "reconnecting"
+        ? ["Menyambung ulang", "critical", "Saluran langsung terputus. Papan sementara ditarik tiap 15 detik."]
+        : ["Berkala", "muted", "Saluran langsung tidak tersedia. Papan ditarik tiap 15 detik."];
+
+  return section({
+    eyebrow: "Pembaruan",
+    title: "Sinkronisasi papan",
+    action: `<button type="button" class="btn btn-sm" id="force-refresh">${icon("refresh", 15)} Tarik ulang</button>`,
+    body: `<div class="form-grid">
+        <div class="fact"><span>Mode</span><strong>${badge(mode[0], mode[1])}</strong></div>
+        <div class="fact"><span>Perubahan terakhir</span><strong class="mono">${esc(
+          lastChange ? formatFull(lastChange) : "belum ada",
+        )}</strong></div>
+        <div class="fact"><span>Diperiksa terakhir</span><strong class="mono">${esc(
+          lastSync ? formatFull(lastSync) : "belum pernah",
+        )}</strong></div>
+        <div class="fact"><span>Tiket dimuat</span><strong class="mono">${esc(store.state.rows.length)}</strong></div>
+      </div>
+      <p class="section-note">${esc(mode[2])} <strong>Tarik ulang</strong> mengabaikan cache dan
+        mengambil ulang dari server — pakai bila layar terasa tidak sesuai kenyataan di lapangan.</p>`,
   });
 }
 
@@ -136,6 +205,8 @@ export function render(root) {
                  </p>`,
         })}
 
+        ${refreshSection()}
+
         ${sourceSection()}
 
         ${section({
@@ -184,6 +255,42 @@ export function render(root) {
     toast(`Beralih ke gudang ${event.target.value}.`);
     globalThis.dispatchEvent(new CustomEvent("inbound:site-changed"));
   });
+
+  root.querySelector("#force-refresh")?.addEventListener("click", (event) =>
+    withBusy(event.currentTarget, async () => {
+      await store.forceRefresh();
+      toast("Papan ditarik ulang dari server.");
+      render(root);
+    }),
+  );
+
+  root.querySelector("#sync-now")?.addEventListener("click", (event) =>
+    withBusy(event.currentTarget, async () => {
+      const slot = root.querySelector("#sync-result");
+      try {
+        const result = await api.syncNow();
+        // Sync yang dilewati bukan kegagalan; ia punya pesannya sendiri.
+        const text = result?.skipped
+          ? result.message
+          : `${result?.written ?? 0} PO tersimpan dari ${result?.fetched ?? 0} baris.`;
+        if (slot) {
+          slot.textContent = text;
+          slot.className = "sync-result";
+          slot.hidden = false;
+        }
+        toast(result?.skipped ? result.message : "Master PO diperbarui.");
+        await store.forceRefresh();
+        render(root);
+      } catch (error) {
+        if (slot) {
+          slot.textContent = error.message;
+          slot.className = "sync-result is-error";
+          slot.hidden = false;
+        }
+        toast(error.message, "error");
+      }
+    }),
+  );
 
   root.querySelectorAll("[data-theme]").forEach((button) => {
     button.addEventListener("click", () => {

@@ -592,6 +592,21 @@ kbd {
   gap: 18px;
 }
 
+/* Anak grid diberi `min-width: 0` secara menyeluruh.
+
+   Bawaan CSS untuk item grid adalah `min-width: auto`, yang berarti "jangan
+   pernah lebih sempit dari isi terlebar di dalammu". Satu anak yang memuat
+   sesuatu yang lebar — rel dok berisi sembilan ubin, sebuah tabel, sebuah
+   grafik — karena itu MELEBARKAN seluruh kolom alih-alih menggulir sendiri,
+   dan seluruh halaman ikut meluber ke samping.
+
+   Terukur di ponsel 390px sebelum baris ini ada: halaman menjadi 820px, dan
+   rel dok yang seharusnya menggulir justru mendorong judul halaman keluar
+   layar. */
+.dashboard-page > * {
+  min-width: 0;
+}
+
 .page-header {
   display: flex;
   min-width: 0;
@@ -2035,6 +2050,40 @@ select.input {
 
 /* Tooltip grafik. Satu simpul dipakai bersama seluruh grafik, dipasang di
    <body> supaya tidak pernah terpotong oleh container yang meng-overflow. */
+/* Spanduk peringatan dan langkah perbaikan di layar Pengaturan. Cookie Superset
+   yang mati adalah kegagalan tersering, dan satu-satunya yang benar-benar
+   menuntut orang untuk bertindak — jadi ia tampil sebagai instruksi bernomor,
+   bukan sebagai pesan galat. */
+.banner-warn {
+  border-color: color-mix(in oklab, var(--status-warning) 45%, var(--line));
+  background: color-mix(in oklab, var(--status-warning) 8%, var(--surface));
+}
+
+.steps {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 5px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.sync-result {
+  margin-top: 10px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.sync-result.is-error {
+  border-color: color-mix(in oklab, var(--status-critical) 45%, var(--line));
+  color: var(--status-critical);
+}
+
 /* Tampilan tabel di balik tiap grafik. Bukan sekadar syarat aksesibilitas:
    supervisor yang menyalin angka ke laporan mingguan tidak seharusnya
    membacanya dari batang. */
@@ -2427,5 +2476,383 @@ select.input {
   .queue-card {
     border-color: #999;
     box-shadow: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * 16. Ponsel — dirapatkan, dan navigasinya dipindahkan ke ibu jari
+ *
+ * Terukur sebelum bagian ini ada: 811 piksel chrome sebelum kartu tiket
+ * pertama. Di layar 812 piksel itu berarti satu layar PENUH digulir sebelum
+ * operator melihat satu pun tiket — pada aplikasi yang seluruh gunanya adalah
+ * melihat tiket.
+ *
+ * Penyebabnya bukan satu hal besar melainkan empat hal sedang yang menumpuk:
+ * bilah filter tiga baris (276px), metrik 2x2 (218px), judul halaman beserta
+ * deskripsinya (143px), dan topbar (65px). Masing-masing tampak wajar sendirian.
+ *
+ * Nadanya tetap: tidak ada warna baru, tidak ada bayangan tambahan, tidak ada
+ * animasi. Yang berubah hanya kerapatan dan urutan — dan ke mana ibu jari harus
+ * bergerak.
+ * ----------------------------------------------------------------------- */
+/* Disclosure filter. Di layar lebar ia BUKAN disclosure sama sekali: ringkasan
+   disembunyikan dan isinya sejajar dengan kotak pencarian, persis seperti
+   sebelum ada bagian ini. Pelipatan hanya berlaku di ponsel, tempat 192 piksel
+   filter yang selalu terbuka mengalahkan tiket yang sedang dicari. */
+.filter-more {
+  display: contents;
+}
+
+.filter-more > summary {
+  display: none;
+}
+
+.filter-more-body {
+  display: contents;
+}
+
+@media (max-width: 720px) {
+  .filter-more {
+    display: block;
+    grid-column: 1 / -1;
+  }
+
+  .filter-more > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 38px;
+    padding: 0 4px;
+    cursor: pointer;
+    list-style: none;
+    color: var(--text-soft);
+    font-size: 12px;
+  }
+
+  .filter-more > summary::-webkit-details-marker { display: none; }
+
+  .filter-more > summary::after {
+    content: "▾";
+    color: var(--text-muted);
+    transition: transform var(--motion-fast) var(--ease);
+  }
+
+  .filter-more[open] > summary::after {
+    transform: rotate(180deg);
+  }
+
+  .filter-more > summary b {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .filter-more > summary span {
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .filter-more > summary:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+
+  .filter-more-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding-top: 8px;
+  }
+}
+
+@media (max-width: 720px) {
+  /* -- Navigasi bawah -----------------------------------------------------
+     Laci samping menuntut dua ketukan dan jangkauan ke pojok kiri ATAS —
+     sudut terjauh dari ibu jari pada perangkat yang dipegang sambil berdiri.
+     Bilah bawah menjadikannya satu ketukan di tempat ibu jari sudah berada.
+     Tanpa perubahan markup: sidebar yang sama, disusun ulang. */
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: fixed;
+    z-index: 40;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: auto;
+    flex-direction: row;
+    border-top: 1px solid var(--line);
+    border-right: 0;
+    background: color-mix(in oklab, var(--surface) 94%, transparent);
+    backdrop-filter: blur(14px);
+    padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
+    transform: none;
+  }
+
+  /* Merek, tombol ciutkan, dan blok pengguna sudah terwakili di topbar dan di
+     halaman Pengaturan; mengulanginya di bilah bawah hanya memakan lebar yang
+     dibutuhkan tombol navigasi. */
+  .sidebar-head,
+  .sidebar-foot {
+    display: none;
+  }
+
+  /* Keadaan laci tidak berlaku lagi pada bilah bawah. Blok laci di 900px
+     menetapkan lebar 280px, `visibility: hidden`, dan transform yang
+     mendorongnya keluar layar — semuanya benar untuk laci, semuanya salah
+     untuk bilah bawah. */
+  .sidebar,
+  .sidebar.rail,
+  .sidebar.mobile-open {
+    width: 100%;
+    max-width: none;
+    visibility: visible;
+    pointer-events: auto;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .sidebar.rail .nav-link span {
+    display: inline;
+  }
+
+  .sidebar nav {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 2px;
+    width: 100%;
+    padding: 0;
+    overflow: visible;
+  }
+
+  .sidebar .nav-link {
+    flex-direction: column;
+    gap: 3px;
+    justify-content: center;
+    min-height: 52px;
+    padding: 6px 2px;
+    border-radius: 10px;
+    font-size: 10.5px;
+    line-height: 1.15;
+    text-align: center;
+  }
+
+  .sidebar .nav-link span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+
+  /* Lencana antrean menempel pada ikonnya, bukan mengambil kolom sendiri. */
+  .sidebar .nav-link b {
+    position: absolute;
+    top: 4px;
+    left: 50%;
+    margin-left: 6px;
+  }
+
+  .sidebar .nav-link {
+    position: relative;
+  }
+
+  /* Laci dan backdrop tidak lagi berlaku. */
+  .mobile-menu,
+  .nav-backdrop {
+    display: none;
+  }
+
+  /* Ruang supaya bilah bawah tidak pernah menutupi isi terakhir. */
+  .workspace {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+
+  /* -- Judul halaman ------------------------------------------------------
+     Deskripsi halaman menjelaskan sesuatu yang sudah dipahami operator setelah
+     hari pertama, dan ia memakan sepertiga ruang sebelum tiket pertama. */
+  .page-header p {
+    display: none;
+  }
+
+  .page-header h1 {
+    font-size: 21px;
+  }
+
+  /* Judul dan aksinya berbagi satu baris. Tombol "Muat ulang" yang berdiri
+     sendiri memakan sembilan puluh piksel — hampir seperdelapan layar — untuk
+     satu tombol yang jarang ditekan. Ikonnya sudah menjelaskan maksudnya, jadi
+     teksnya dilepas dan tombolnya menyusut menjadi bujur sangkar. */
+  .page-header {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .page-header .page-actions {
+    flex: 0 0 auto;
+  }
+
+  .page-header .page-actions .btn {
+    min-width: 42px;
+    justify-content: center;
+    padding: 0 12px;
+    font-size: 0;
+  }
+
+  /* -- Metrik -------------------------------------------------------------
+     Empat kartu 2x2 menjadi satu baris pil yang menggulir. Angkanya tetap
+     terbaca; yang hilang hanya bidang kosong di sekelilingnya. */
+  .metric-strip,
+  .metric-strip-three,
+  .metric-strip-four {
+    display: grid;
+    grid-auto-flow: column;
+    /* Lebar TETAP, bukan minmax dengan 1fr. Di dalam wadah yang menggulir,
+       `1fr` justru memeras kolom ke bawah lantai minimumnya, dan labelnya
+       terpotong menjadi "ME" dan "DI" — dua kata yang tidak berarti apa pun. */
+    /* `grid-template-columns` HARUS dinolkan lebih dulu.
+
+       Aturan desktop `.metric-strip-four` mendefinisikan empat kolom EKSPLISIT
+       `minmax(0, 1fr)`. Kolom eksplisit selalu menang atas `grid-auto-columns`,
+       yang hanya berlaku bagi kolom implisit — jadi tanpa baris ini keempat
+       kartu tetap diperas ke 83 piksel dan labelnya terpotong menjadi "ME" dan
+       "DI", dua kata yang tidak berarti apa pun. */
+    grid-template-columns: none;
+    grid-auto-columns: 138px;
+    gap: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .metric-strip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .metric-card {
+    gap: 2px;
+    padding: 9px 11px;
+    border-radius: 11px;
+  }
+
+  .metric-value {
+    font-size: 21px;
+  }
+
+  /* Keterangan panjang di bawah angka adalah hal pertama yang dapat dilepas:
+     labelnya sudah menyebut apa yang dihitung. */
+  .metric-sub {
+    display: none;
+  }
+
+  /* -- Filter -------------------------------------------------------------
+     Tiga medan selebar layar menjadi tiga baris penuh. Pencarian tetap
+     selebar layar karena ia yang paling sering disentuh; status dan gate
+     berbagi satu baris di bawahnya. */
+  .filter-bar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .filter-bar > label:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .filter-bar label span {
+    font-size: 10px;
+  }
+
+  .filter-bar .table-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  /* Medan kosong yang hanya ada untuk menjaga kolom di layar lebar. */
+  .filter-bar > div:empty {
+    display: none;
+  }
+
+  /* -- Kartu antrean ------------------------------------------------------
+     Dirapatkan tanpa mengecilkan dua hal yang harus terbaca dari jauh: nomor
+     antrean dan hitung mundur. */
+  .queue-card {
+    gap: 9px;
+    padding: 12px;
+  }
+
+  .queue-facts {
+    gap: 8px 12px;
+  }
+
+  .sla-hero {
+    padding: 9px 12px;
+  }
+
+  .board-grid {
+    gap: 10px;
+  }
+
+  /* -- Rel dok ------------------------------------------------------------
+     Ubin lebih sempit supaya lebih banyak pintu terlihat sekaligus sebelum
+     perlu menggulir. */
+  .dock-rail {
+    grid-auto-columns: minmax(84px, 1fr);
+    gap: 6px;
+  }
+
+  .dock {
+    padding: 7px 8px 9px;
+  }
+
+  .dock-no {
+    font-size: 17px;
+  }
+
+  /* -- Bagian dan grafik --------------------------------------------------- */
+  .section-body {
+    padding: 12px;
+  }
+
+  .section-head {
+    padding: 11px 12px;
+  }
+
+  .stat-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .stat {
+    padding: 10px 12px;
+  }
+
+  .stat-value {
+    font-size: 21px;
+  }
+}
+
+/* Di layar sangat sempit, label navigasi bawah dilepas dan menyisakan ikon.
+   Lima label yang saling terpotong lebih sulit dibaca daripada lima ikon. */
+@media (max-width: 380px) {
+  .sidebar .nav-link span {
+    display: none;
+  }
+
+  .sidebar .nav-link {
+    min-height: 46px;
+  }
+
+  .workspace {
+    padding-bottom: calc(66px + env(safe-area-inset-bottom));
   }
 }

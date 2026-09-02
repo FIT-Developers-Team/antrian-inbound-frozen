@@ -73,6 +73,33 @@ function withSiteFilter(queryContext, locationIds) {
   };
 }
 
+/**
+ * Cookie Superset yang kedaluwarsa adalah kegagalan tersering di sini, dan
+ * selama ini ia menyamar sebagai galat HTTP biasa.
+ *
+ * Superset menjawab 401 atau 403 ketika sesinya mati, dan pesan yang tercatat
+ * hanyalah "Superset menjawab HTTP 401" — kalimat yang benar tetapi tidak
+ * memberi tahu siapa pun apa yang harus dilakukan. Cookie itu berumur terbatas
+ * dan HARUS diperbarui manual; membedakannya dari gangguan jaringan berarti
+ * membedakan "tunggu sebentar" dari "ada yang harus login ke Superset dan
+ * menyalin cookie baru".
+ */
+export class SupersetAuthError extends Error {
+  constructor(status) {
+    super(
+      `Cookie Superset sudah kedaluwarsa (HTTP ${status}). ` +
+        "Masuk ke Superset, salin nilai cookie `session` yang baru ke SUPERSET_SESSION_COOKIE, lalu deploy ulang.",
+    );
+    this.name = "SupersetAuthError";
+    this.status = status;
+    this.kind = "COOKIE_EXPIRED";
+  }
+}
+
+function assertAuthorized(response) {
+  if (response.status === 401 || response.status === 403) throw new SupersetAuthError(response.status);
+}
+
 async function fetchRows(locationIds) {
   // Jalur utama: jalankan query_context milik chart dengan filter gudang aktif.
   try {
@@ -80,6 +107,10 @@ async function fetchRows(locationIds) {
       headers: headers(),
       signal: timeoutSignal(),
     });
+    // Cookie mati tidak boleh jatuh ke jalur cadangan: cadangannya memakai
+    // cookie yang sama dan pasti gagal juga, sehingga pesan yang tercatat
+    // kehilangan sebab aslinya.
+    assertAuthorized(chart);
     const meta = await chart.json();
     const raw = meta?.result?.query_context;
     if (raw) {
@@ -93,6 +124,7 @@ async function fetchRows(locationIds) {
       if (response.ok) return { rows: rowsFromPayload(await response.json()), mode: "query_context_filtered" };
     }
   } catch (error) {
+    if (error instanceof SupersetAuthError) throw error;
     console.warn("[superset] query_context gagal, memakai saved chart:", error.message);
   }
 
@@ -101,6 +133,7 @@ async function fetchRows(locationIds) {
     headers: headers(),
     signal: timeoutSignal(),
   });
+  assertAuthorized(response);
   if (!response.ok) throw new Error(`Superset menjawab HTTP ${response.status}`);
   return { rows: rowsFromPayload(await response.json()), mode: "saved_chart" };
 }
@@ -230,12 +263,14 @@ export async function runSupersetSync(pool) {
     // muncul di log — menyembunyikan penyebab aslinya.
     await pool
       .query(
-        "update sync_runs set status='FAILED', error_message=$2, finished_at=now() where run_id=$1",
-        [runId, String(error.message).slice(0, 500)],
+        "update sync_runs set status=$2, error_message=$3, finished_at=now() where run_id=$1",
+        // Status dibedakan supaya layar Pengaturan dapat menunjukkan tindakan
+        // yang benar: cookie kedaluwarsa perlu orang, gangguan jaringan tidak.
+        [runId, error?.kind === "COOKIE_EXPIRED" ? "COOKIE_EXPIRED" : "FAILED", String(error.message).slice(0, 500)],
       )
       .catch((secondary) => console.error("[superset] status gagal dicatat:", secondary.message));
     console.error("[superset] sync gagal:", error.message);
-    return { error: error.message };
+    return { error: error.message, kind: error?.kind || "FAILED" };
   } finally {
     running = false;
   }

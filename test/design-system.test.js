@@ -140,8 +140,19 @@ test("ikon adalah SVG sebaris, bukan font ikon", () => {
 });
 
 test("hanya ada satu berkas gaya dan ukurannya wajar", () => {
+  // Batas ini dinaikkan dari 60 KB, dan alasannya dicatat supaya kenaikan
+  // berikutnya harus dibela juga.
+  //
+  // Angka 60 KB ditetapkan ketika aplikasi ini belum punya grafik, belum punya
+  // rel dok, dan belum punya lapisan tata letak ponsel. Ketiganya kini ada, dan
+  // ketiganya membawa gayanya sendiri. Yang dijaga batas ini sebenarnya bukan
+  // angkanya melainkan sifatnya: SATU berkas, tanpa framework, tanpa kelas yang
+  // dibangkitkan — dan sifat itu masih berlaku.
+  //
+  // Bila angka ini perlu naik lagi, pertanyaannya bukan "berapa" melainkan
+  // "gaya apa yang baru saja bertambah, dan apakah ia berhak ada".
   const bytes = Buffer.byteLength(css, "utf8");
-  assert.ok(bytes < 60_000, `style.css harus tetap ramping, sekarang ${bytes} byte`);
+  assert.ok(bytes < 72_000, `style.css harus tetap ramping, sekarang ${bytes} byte`);
   assert.equal((html.match(/rel="stylesheet"/g) || []).length, 2, "hanya font Google dan style.css");
 });
 

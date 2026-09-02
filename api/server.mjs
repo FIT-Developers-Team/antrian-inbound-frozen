@@ -234,7 +234,7 @@ function authStatus() {
 /* --------------------------------------------------------------------------
  * Otorisasi
  * ----------------------------------------------------------------------- */
-const READ_ACTIONS = ["board", "history", "sites", "source_freshness", "lead_time", "events"];
+const READ_ACTIONS = ["board", "history", "sites", "source_freshness", "lead_time", "events", "po_search"];
 const ALL_ROLES = KNOWN_ROLES;
 
 const WRITE_ACTIONS = {
@@ -246,6 +246,10 @@ const WRITE_ACTIONS = {
   start_unloading: ["CHECKER", "SPV", "ADMIN", "DEVELOPER"],
   finish_unloading: ["CHECKER", "SPV", "ADMIN", "DEVELOPER"],
   cancel_ticket: ["SPV", "ADMIN", "DEVELOPER"],
+  // Menarik ulang master PO atas permintaan. Cookie Superset berumur terbatas,
+  // dan menunggu siklus lima menit berikutnya setelah menggantinya adalah lima
+  // menit yang dihabiskan menatap layar yang belum berubah.
+  sync_now: ["SPV", "ADMIN", "DEVELOPER"],
   delete_tickets_by_date: ["ADMIN", "DEVELOPER"],
   delete_single_ticket: ["ADMIN", "DEVELOPER"],
 };
@@ -574,6 +578,19 @@ async function handle(request, response) {
     return send(response, 200, { ok: true, data: await rpc("inbound_source_freshness", [site]) });
   }
 
+  if (request.method === "GET" && action === "po_search") {
+    // Menggantikan pengunduhan master PO utuh. Jawabannya tidak pernah lebih
+    // dari beberapa baris, jadi ia tidak perlu ETag maupun kompresi.
+    return send(response, 200, {
+      ok: true,
+      data: await rpc("inbound_po_search", [
+        site,
+        url.searchParams.get("q") || "",
+        Number(url.searchParams.get("limit")) || 8,
+      ]),
+    });
+  }
+
   if (request.method === "GET" && action === "po_master") {
     // Fingerprint dihitung lebih dulu supaya klien yang sudah mutakhir tidak
     // pernah memaksa Postgres membangun payload puluhan ribu baris.
@@ -603,6 +620,29 @@ async function handle(request, response) {
       ok: true,
       data: await rpc(TICKET_RPC[action], [JSON.stringify(body), JSON.stringify(actor)]),
     });
+  }
+
+  if (request.method === "POST" && action === "sync_now") {
+    const { runSupersetSync } = await import("./sync-superset.mjs");
+    const result = await runSupersetSync(pool);
+    if (result?.error) {
+      // 200 dengan ok:false, bukan 5xx: sync yang gagal bukan kegagalan
+      // permintaan ini — jawabannya justru informasi yang diminta operator.
+      return send(response, 200, { ok: false, message: result.error, kind: result.kind });
+    }
+    if (result?.skipped) {
+      return send(response, 200, {
+        ok: true,
+        data: {
+          skipped: true,
+          message:
+            result.reason === "overlap"
+              ? "Sinkronisasi sedang berjalan; tunggu siklus ini selesai."
+              : "Sinkronisasi tidak aktif karena SUPERSET_SESSION_COOKIE belum diisi.",
+        },
+      });
+    }
+    return send(response, 200, { ok: true, data: result });
   }
 
   if (request.method === "POST" && action === "delete_tickets_by_date") {

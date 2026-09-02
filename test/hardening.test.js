@@ -322,25 +322,44 @@ test("mengetik tidak membangun ulang seluruh halaman", () => {
 
   const register = read("js/pages/register.js");
   assert.match(register, /function suggestionMarkup\(\)/);
-  assert.match(register, /debounce\(refreshSuggestions\)/);
+  assert.match(register, /debounce\(runSearch, 180\)/);
+  assert.match(register, /const paintSuggestions = \(\) =>/, "hanya kotak saran yang ditulis ulang");
 });
 
-test("master PO tidak diunduh berkali-kali sekaligus", () => {
-  // `render()` memanggil ensurePoMaster(), dan render berjalan pada setiap
-  // ketukan tombol: mengetik lima huruf sebelum permintaan pertama selesai
-  // memicu lima unduhan berisi puluhan ribu baris.
-  const store = read("js/store.js");
-  assert.match(store, /let poMasterRequest = null/);
-  assert.match(store, /if \(poMasterRequest\) return poMasterRequest/);
-});
-
-test("pencarian PO tidak membuat ulang puluhan ribu string tiap ketukan", () => {
+test("master PO tidak pernah diunduh utuh ke tablet", () => {
+  // Layar pendaftaran dulu mengunduh SELURUH master lalu menyaringnya di
+  // tablet. Pada master PGS seukuran produksi itu terukur 3,4 MB JSON, hampir
+  // satu detik menunggu, dan tiga puluh ribu objek JavaScript yang menetap di
+  // memori — semuanya untuk menjawab pertanyaan yang jawabannya tidak pernah
+  // lebih dari delapan baris.
   const register = read("js/pages/register.js");
-  assert.match(register, /let searchIndex = \{ source: null, entries: \[\] \}/);
-  assert.match(register, /if \(searchIndex\.source === master\) return searchIndex\.entries/);
-  // Pencarian berhenti begitu delapan saran terkumpul, bukan menelusuri seluruh
-  // master lalu membuang sisanya.
-  assert.match(register, /if \(found\.length >= MAX_SUGGESTIONS\) break/);
+  assert.doesNotMatch(register, /ensurePoMaster|state\.poMaster/, "master utuh tidak boleh kembali");
+  assert.match(register, /api\.searchPoMaster\(query\)/);
+
+  const store = read("js/store.js");
+  assert.doesNotMatch(store, /poMaster/, "state tidak lagi menyimpan master");
+});
+
+test("pencarian PO dikerjakan Postgres lewat index, bukan dipindai di tablet", () => {
+  const sqlSource = schema();
+  assert.match(sqlSource, /create extension if not exists pg_trgm/);
+  assert.match(sqlSource, /superset_po_number_trgm_idx[\s\S]{0,80}gin_trgm_ops/);
+  assert.match(sqlSource, /create or replace function inbound_po_search/);
+  // Kecocokan awalan nomor PO menang atas kecocokan di tengah, dan keduanya
+  // menang atas kecocokan nama vendor: operator yang mengetik "PO0012" hampir
+  // selalu memaksudkan nomornya.
+  assert.match(sqlSource, /when upper\(m\.po_number\) like n\.q \|\| '%' then 1/);
+  assert.match(server, /action === "po_search"/);
+});
+
+test("ketikan cepat tidak membuat jawaban lama menimpa yang baru", () => {
+  // Beberapa permintaan berjalan bersamaan dan jaringan tidak menjamin urutan
+  // kedatangannya. Tanpa penjaga, jawaban untuk "PO001" yang datang terlambat
+  // menimpa jawaban untuk "PO0012" yang sudah tampil.
+  const register = read("js/pages/register.js");
+  assert.match(register, /let searchToken = 0/);
+  assert.match(register, /const token = \+\+searchToken/);
+  assert.match(register, /if \(token !== searchToken\) return/);
 });
 
 test("sinkronisasi Superset menulis berkelompok, bukan satu baris satu perjalanan", () => {

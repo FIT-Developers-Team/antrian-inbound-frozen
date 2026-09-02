@@ -98,49 +98,19 @@ function plateInput() {
 }
 
 /**
- * Index pencarian PO yang sudah di-uppercase.
+ * Hasil pencarian PO terakhir dari server.
  *
- * Master PGS berisi puluhan ribu baris. Menulis
- * `po.po_number.toUpperCase().includes(query)` di dalam filter berarti membuat
- * puluhan ribu string baru pada SETIAP ketukan tombol, lalu membuangnya semua.
- * Bentuk huruf besarnya dihitung sekali per pemuatan master dan dipakai ulang.
- *
- * Index dibangun ulang ketika larik master berganti identitas — yang hanya
- * terjadi saat master dimuat atau gudang berpindah.
+ * Sebelumnya di sini ada indeks tiga puluh ribu baris yang dibangun di tablet
+ * dari master yang diunduh utuh. Yang tersisa sekarang hanya delapan baris
+ * terakhir yang benar-benar ditampilkan — pencariannya sendiri dikerjakan
+ * Postgres lewat index trigram.
  */
-let searchIndex = { source: null, entries: [] };
-
-function poSearchIndex() {
-  const master = store.state.poMaster;
-  if (searchIndex.source === master) return searchIndex.entries;
-  searchIndex = {
-    source: master,
-    entries: master.map((po) => ({
-      po,
-      haystack: `${po.po_number || ""} ${po.vendor_name || ""}`.toUpperCase(),
-    })),
-  };
-  return searchIndex.entries;
-}
+let suggestions = [];
+let searchToken = 0;
+let searching = false;
 
 /** Delapan saran teratas; lebih dari itu tidak muat di layar tablet. */
 const MAX_SUGGESTIONS = 8;
-
-function matchingPos() {
-  const query = form.poQuery.trim().toUpperCase();
-  if (!query) return [];
-  const chosen = new Set(form.pos.map((po) => po.po_number));
-  const found = [];
-  // Perulangan manual, bukan filter().slice(): pencarian berhenti begitu delapan
-  // saran terkumpul, alih-alih menelusuri seluruh master lalu membuang sisanya.
-  for (const entry of poSearchIndex()) {
-    if (chosen.has(entry.po.po_number)) continue;
-    if (!entry.haystack.includes(query)) continue;
-    found.push(entry.po);
-    if (found.length >= MAX_SUGGESTIONS) break;
-  }
-  return found;
-}
 
 /**
  * Isi kotak saran saja.
@@ -151,10 +121,11 @@ function matchingPos() {
  */
 function suggestionMarkup() {
   const query = form.poQuery.trim();
-  const suggestions = matchingPos();
+  const chosen = new Set(form.pos.map((po) => po.po_number));
+  const visible = suggestions.filter((po) => !chosen.has(po.po_number));
 
-  if (suggestions.length) {
-    return suggestions
+  if (visible.length) {
+    return visible
       .map(
         (po) => `<button type="button" class="po-suggestion" data-add-po="${esc(po.po_number)}">
           <strong>${esc(po.po_number)}</strong>
@@ -164,9 +135,7 @@ function suggestionMarkup() {
       .join("");
   }
   if (!query) return "";
-  if (!store.state.poMaster.length) {
-    return `<p class="section-note">Master PO belum selesai dimuat. Tunggu sebentar, atau pakai PO manual.</p>`;
-  }
+  if (searching) return `<p class="section-note">Mencari…</p>`;
   return `<p class="section-note">Tidak ada PO cocok di master gudang aktif. Pakai PO manual bila memang belum terbit.</p>`;
 }
 
@@ -211,17 +180,6 @@ function poPicker() {
 export function render(root) {
   if (!form.arrivedAt) resetForm();
   const site = currentSite();
-
-  // Master PO dimuat sekali dan dibagikan; permintaan yang sedang berjalan
-  // tidak digandakan. Saat ia tiba, kotak saran diperbarui di tempat — tanpa
-  // itu, operator yang sudah mengetik sebelum master selesai dimuat melihat
-  // "tidak ada PO cocok" sampai ia menghapus dan mengetik ulang.
-  store.ensurePoMaster().then(() => {
-    const slot = root.querySelector("#po-suggestions");
-    if (!slot || !form.poQuery.trim()) return;
-    slot.innerHTML = suggestionMarkup();
-    bindSuggestions(root);
-  });
 
   root.innerHTML = `<div class="dashboard-page">
     ${pageHeader({
@@ -392,16 +350,54 @@ function bindEvents(root) {
   // ulang: itulah yang dulu memaksa fokus dikembalikan dengan tangan setiap
   // ketukan, dan yang membuat kursor selalu melompat ke ujung sehingga
   // menyunting di tengah nomor PO mustahil.
-  const refreshSuggestions = () => {
+  const paintSuggestions = () => {
     const slot = root.querySelector("#po-suggestions");
     if (slot) slot.innerHTML = suggestionMarkup();
     bindSuggestions(root);
   };
-  const refreshSuggestionsSoon = debounce(refreshSuggestions);
+
+  /**
+   * Mencari ke server, dengan penjaga balapan.
+   *
+   * Ketikan cepat menghasilkan beberapa permintaan yang berjalan bersamaan, dan
+   * jaringan tidak menjamin urutan kedatangannya. Tanpa token ini, jawaban
+   * untuk "PO001" yang datang terlambat dapat menimpa jawaban untuk "PO0012"
+   * yang sudah tampil — operator melihat daftar yang tidak cocok dengan apa
+   * yang ada di kotak.
+   */
+  const runSearch = async () => {
+    const query = form.poQuery.trim();
+    if (!query) {
+      suggestions = [];
+      searching = false;
+      paintSuggestions();
+      return;
+    }
+
+    const token = ++searchToken;
+    searching = true;
+    paintSuggestions();
+    try {
+      const found = await api.searchPoMaster(query);
+      if (token !== searchToken) return;
+      suggestions = Array.isArray(found) ? found : [];
+    } catch (error) {
+      if (token !== searchToken) return;
+      suggestions = [];
+      console.warn("Pencarian PO gagal", error);
+    } finally {
+      if (token === searchToken) {
+        searching = false;
+        paintSuggestions();
+      }
+    }
+  };
+
+  const searchSoon = debounce(runSearch, 180);
 
   root.querySelector("#po-query")?.addEventListener("input", (event) => {
     form.poQuery = event.target.value;
-    refreshSuggestionsSoon();
+    searchSoon();
   });
 
   bindSuggestions(root);
@@ -452,7 +448,9 @@ function bindSuggestions(root) {
   root.querySelectorAll("[data-add-po]").forEach((button) => {
     button.addEventListener("click", () => {
       const poNumber = button.dataset.addPo;
-      const master = store.state.poMaster.find((po) => po.po_number === poNumber);
+      // Baris master datang bersama hasil pencarian, jadi tidak perlu dicari
+      // ulang di salinan lokal yang kini sudah tidak ada.
+      const master = suggestions.find((po) => po.po_number === poNumber);
       form.pos.push({
         po_number: poNumber,
         vendor_name: master?.vendor_name || "",
