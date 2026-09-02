@@ -30,7 +30,7 @@
 import * as api from "../api.js";
 import { currentSite } from "../config.js";
 import { esc, formatMinutes, toDateInputValue } from "../format.js";
-import { emptyState, icon, pageHeader, section, toast, withBusy } from "../ui.js";
+import { badge, emptyState, icon, pageHeader, section, toast, withBusy } from "../ui.js";
 import {
   bindChartTooltips,
   chartEmpty,
@@ -47,6 +47,7 @@ const range = {
 };
 
 let stats = null;
+let vendors = null;
 let loading = false;
 let loadedKey = "";
 
@@ -128,6 +129,111 @@ function tableView(caption, headers, rows) {
       </table>
     </div>
   </details>`;
+}
+
+/* --------------------------------------------------------------------------
+ * Vendor, dok, dan pembatalan
+ * ----------------------------------------------------------------------- */
+
+/**
+ * Tabel kinerja vendor.
+ *
+ * Diurutkan menurut MENIT DOK, bukan jumlah tiket. Vendor yang datang sepuluh
+ * kali dengan muatan kecil tidak sama beratnya dengan vendor yang datang tiga
+ * kali dan menahan dok empat jam tiap kali — dan yang kedua itulah yang
+ * menentukan panjang antrean di luar.
+ *
+ * Kolom "batal" berdiri sendiri karena tiket batal tidak punya durasi untuk
+ * dirata-rata: ia hilang dari setiap angka lain, padahal ia adalah slot dok
+ * yang sudah dijanjikan lalu terbuang.
+ */
+function vendorTable(rows) {
+  if (!rows?.length) return emptyState("Belum ada tiket pada rentang ini");
+
+  const maxMinutes = Math.max(...rows.map((row) => row.dock_minutes || 0), 1);
+
+  return `<div class="table-scroll">
+    <table class="tbl">
+      <thead><tr>
+        <th>Vendor</th><th class="numeric">Tiket</th><th>Waktu dok</th>
+        <th class="numeric">Tunggu</th><th class="numeric">Bongkar p50</th><th class="numeric">p90</th>
+        <th class="numeric">SKU</th><th class="numeric">Batal</th><th>SLA</th>
+      </tr></thead>
+      <tbody>${rows
+        .map((row) => {
+          const compliance = row.sla_judged ? Math.round((row.sla_met / row.sla_judged) * 100) : null;
+          const tone =
+            compliance === null ? "muted" : compliance >= 90 ? "normal" : compliance >= 75 ? "warning" : "critical";
+          return `<tr>
+            <td><strong>${esc(row.vendor)}</strong></td>
+            <td class="numeric mono">${esc(row.tickets)}</td>
+            <td>
+              <div class="bar-cell">
+                <span class="bar-track"><i style="width:${((row.dock_minutes || 0) / maxMinutes) * 100}%"></i></span>
+                <b class="mono">${esc(formatMinutes(row.dock_minutes))}</b>
+              </div>
+            </td>
+            <td class="numeric mono">${esc(formatMinutes(row.wait_p50))}</td>
+            <td class="numeric mono">${esc(formatMinutes(row.unload_p50))}</td>
+            <td class="numeric mono">${esc(formatMinutes(row.unload_p90))}</td>
+            <td class="numeric mono">${esc(row.total_sku)}</td>
+            <td class="numeric mono">${row.cancelled ? `<span class="cancel-count">${esc(row.cancelled)}</span>` : "-"}</td>
+            <td>${compliance === null ? badge("-", "muted") : badge(`${compliance}%`, tone)}</td>
+          </tr>`;
+        })
+        .join("")}</tbody>
+    </table>
+  </div>`;
+}
+
+/**
+ * Pemakaian dok.
+ *
+ * Sembilan pintu jarang terpakai merata. Yang selalu penuh dan yang jarang
+ * tersentuh sama-sama memberi tahu sesuatu tentang cara gate dibagikan — dan
+ * keduanya tidak pernah terlihat dari papan antrean, yang hanya menunjukkan
+ * keadaan saat ini.
+ */
+function gateChart(gateRows) {
+  if (!gateRows?.length) return chartEmpty("Belum ada gate aktif.");
+  return columnChart(gateRows, {
+    title: "Pemakaian dok",
+    description: "Total menit dok terpakai per pintu inbound pada rentang terpilih.",
+    series: "unload",
+    // Nilainya dijadikan JAM sejak awal, bukan menit yang dibagi saat
+    // menampilkan label. Menit menghasilkan garis sumbu pada 1000 dan 2000 —
+    // yang setelah dibagi menjadi "17j" dan "33j", angka yang terlihat
+    // sembarang. Dalam jam, garisnya jatuh pada kelipatan bulat.
+    valueOf: (row) => Math.round(((row.dock_minutes || 0) / 60) * 10) / 10,
+    labelOf: (row) => row.gate.slice(-2),
+    tipOf: (row) =>
+      `${row.gate} — ${row.tickets} tiket, ${formatMinutes(row.dock_minutes)} terpakai` +
+      (row.unload_p50 ? `, median ${formatMinutes(row.unload_p50)}` : ""),
+    formatValue: (v) => `${Math.round(v)}j`,
+  });
+}
+
+/** Alasan pembatalan, diurutkan menurut yang paling sering. */
+function cancellationList(reasons) {
+  if (!reasons?.length) {
+    return `<p class="section-note">Tidak ada tiket yang dibatalkan pada rentang ini.</p>`;
+  }
+  // Menjumlahkan segelintir alasan untuk menentukan lebar bar — bukan
+  // mengagregasi baris tiket, yang seluruhnya tetap dikerjakan Postgres.
+  const total = reasons.reduce((sum, reason) => sum + reason.tickets, 0);
+  return `<div class="reason-list">
+    ${reasons
+      .map(
+        (reason) => `<div class="reason">
+          <span class="reason-label">${esc(reason.reason)}</span>
+          <span class="bar-track"><i class="is-critical" style="width:${(reason.tickets / total) * 100}%"></i></span>
+          <b class="mono">${esc(reason.tickets)}</b>
+        </div>`,
+      )
+      .join("")}
+    <p class="section-note">${total} tiket dibatalkan — setiap satu adalah slot dok
+      yang sudah dijanjikan lalu terbuang.</p>
+  </div>`;
 }
 
 /* --------------------------------------------------------------------------
@@ -272,6 +378,37 @@ export function render(root) {
       })}
 
       ${section({
+        eyebrow: "Vendor",
+        title: "Siapa yang memakai waktu dok",
+        body:
+          vendorTable(vendors?.by_vendor) +
+          `<p class="section-note">
+            Diurutkan menurut total waktu dok, bukan jumlah tiket: vendor yang datang sepuluh kali
+            dengan muatan kecil tidak sama beratnya dengan vendor yang datang tiga kali dan menahan
+            dok empat jam tiap kali. Kolom <strong>Batal</strong> berdiri sendiri karena tiket batal
+            tidak punya durasi untuk dirata-rata — ia hilang dari setiap angka lain, padahal ia slot
+            dok yang sudah dijanjikan lalu terbuang.
+          </p>`,
+        flush: true,
+      })}
+
+      ${section({
+        eyebrow: "Dok",
+        title: "Pemakaian pintu inbound",
+        body:
+          gateChart(vendors?.by_gate) +
+          `<p class="section-note">Sumbu tegak dalam jam. Pintu yang selalu penuh dan pintu yang
+            jarang tersentuh sama-sama memberi tahu sesuatu tentang cara gate dibagikan — dan
+            keduanya tidak terlihat dari papan antrean, yang hanya menunjukkan keadaan saat ini.</p>`,
+      })}
+
+      ${section({
+        eyebrow: "Batal",
+        title: "Alasan tiket keluar antrean",
+        body: cancellationList(vendors?.cancellations),
+      })}
+
+      ${section({
         eyebrow: "Tren",
         title: "Kepatuhan SLA harian",
         body:
@@ -314,10 +451,17 @@ async function load(root) {
   loading = true;
   const requested = rangeKey();
   try {
-    stats = await api.fetchLeadTime(range.from, range.to);
+    // Keduanya diminta bersamaan, bukan berurutan: dua perjalanan yang saling
+    // menunggu adalah dua kali waktu tunggu untuk data yang tidak saling
+    // bergantung.
+    [stats, vendors] = await Promise.all([
+      api.fetchLeadTime(range.from, range.to),
+      api.fetchVendorStats(range.from, range.to),
+    ]);
   } catch (error) {
     toast(error.message, "error");
     stats = null;
+    vendors = null;
   } finally {
     loading = false;
     // Rentang yang sudah dijawab diingat sebagai sudah dijawab, termasuk ketika

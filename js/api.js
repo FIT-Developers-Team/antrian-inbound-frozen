@@ -412,6 +412,17 @@ export function fetchHistory(from, to) {
  * hanya untuk dirata-rata di tablet adalah pekerjaan yang pernah membuat
  * halaman Laporan membeku.
  */
+/**
+ * Kinerja per vendor, pemakaian dok, dan alasan pembatalan.
+ *
+ * Terpisah dari lead time karena keduanya dibaca orang yang berbeda: lead time
+ * menjawab "apakah gudang membaik", sedangkan ini menjawab "siapa yang membuat
+ * gudang begitu" — dan yang kedua itulah bahan percakapan dengan vendor.
+ */
+export function fetchVendorStats(from, to) {
+  return apiGet("vendor_stats", { from, to });
+}
+
 export function fetchLeadTime(from, to) {
   return apiGet("lead_time", { from, to });
 }
@@ -451,6 +462,23 @@ export function finishUnloading(ticketId) {
  * cookie barunya benar adalah lima menit yang dihabiskan menatap layar yang
  * belum berubah.
  */
+/**
+ * Bentuk setelan sinkronisasi — bukan isinya.
+ *
+ * Server tidak pernah mengembalikan nilai cookie. Yang datang hanya panjang,
+ * sidik jari pendek, siapa yang terakhir mengubahnya, dan kapan — cukup untuk
+ * memastikan dua orang sedang membicarakan cookie yang sama tanpa satu pun dari
+ * mereka melihatnya.
+ */
+export function fetchSettingsStatus() {
+  return apiGet("settings_status");
+}
+
+/** Menyimpan cookie sesi Superset. Mengirim string kosong menghapusnya. */
+export function setSyncCookie(cookie) {
+  return apiPost("set_sync_cookie", { cookie });
+}
+
 export function syncNow() {
   return apiPost("sync_now");
 }

@@ -29,19 +29,46 @@ const CHART_ID = process.env.SUPERSET_CHART_ID || "20662";
 const LOCATION_COLUMN = process.env.SUPERSET_LOCATION_COLUMN || "location_id";
 const BASE_URL = (process.env.SUPERSET_BASE_URL || "https://dash.astronauts.id").replace(/\/$/, "");
 
-function enabled() {
-  return Boolean(process.env.SUPERSET_SESSION_COOKIE);
+/**
+ * Cookie sesi Superset — dari database dulu, lingkungan sebagai cadangan.
+ *
+ * Urutannya penting dan disengaja. Variabel lingkungan adalah tempat yang lebih
+ * aman, jadi ia tetap menjadi nilai bawaan; setelan di database menimpanya
+ * hanya bila benar-benar diisi.
+ *
+ * Alasannya operasional: cookie Superset kedaluwarsa berkala, dan menggantinya
+ * lewat variabel lingkungan berarti menunggu deploy ulang selesai — beberapa
+ * menit master PO membeku, pada saat yang justru paling tidak tepat, karena
+ * cookie biasanya mati saat sedang dipakai.
+ *
+ * Dibaca ULANG pada setiap siklus, bukan sekali saat start: cookie yang baru
+ * diisi lewat layar Pengaturan harus langsung berlaku tanpa menyalakan ulang
+ * proses.
+ */
+async function resolveCookie(pool) {
+  try {
+    const { rows } = await pool.query(
+      "select setting_value from app_settings where setting_key = 'superset_session_cookie'",
+    );
+    const stored = String(rows[0]?.setting_value || "").trim();
+    if (stored) return stored;
+  } catch (error) {
+    // Tabel setelan yang belum ada bukan alasan menghentikan sinkronisasi;
+    // jalur lingkungan masih berlaku.
+    console.warn("[superset] setelan cookie tidak terbaca:", error.message);
+  }
+  return String(process.env.SUPERSET_SESSION_COOKIE || "").trim();
 }
 
 function timeoutSignal() {
   return AbortSignal.timeout(FETCH_TIMEOUT_MS);
 }
 
-function headers() {
-  const cookie = String(process.env.SUPERSET_SESSION_COOKIE || "").trim();
+function headers(cookie) {
+  const value = String(cookie || "").trim();
   return {
     accept: "application/json",
-    cookie: cookie.startsWith("session=") ? cookie : `session=${cookie}`,
+    cookie: value.startsWith("session=") ? value : `session=${value}`,
     referer: `${BASE_URL}/`,
   };
 }
@@ -100,11 +127,11 @@ function assertAuthorized(response) {
   if (response.status === 401 || response.status === 403) throw new SupersetAuthError(response.status);
 }
 
-async function fetchRows(locationIds) {
+async function fetchRows(locationIds, cookie) {
   // Jalur utama: jalankan query_context milik chart dengan filter gudang aktif.
   try {
     const chart = await fetch(`${BASE_URL}/api/v1/chart/${CHART_ID}`, {
-      headers: headers(),
+      headers: headers(cookie),
       signal: timeoutSignal(),
     });
     // Cookie mati tidak boleh jatuh ke jalur cadangan: cadangannya memakai
@@ -117,7 +144,7 @@ async function fetchRows(locationIds) {
       const context = withSiteFilter(typeof raw === "string" ? JSON.parse(raw) : raw, locationIds);
       const response = await fetch(`${BASE_URL}/api/v1/chart/data`, {
         method: "POST",
-        headers: { ...headers(), "content-type": "application/json" },
+        headers: { ...headers(cookie), "content-type": "application/json" },
         body: JSON.stringify(context),
         signal: timeoutSignal(),
       });
@@ -130,7 +157,7 @@ async function fetchRows(locationIds) {
 
   // Cadangan: chart tanpa query_context tersimpan.
   const response = await fetch(`${BASE_URL}/api/v1/chart/${CHART_ID}/data/?force=true`, {
-    headers: headers(),
+    headers: headers(cookie),
     signal: timeoutSignal(),
   });
   assertAuthorized(response);
@@ -222,9 +249,10 @@ async function writeRows(pool, rows, byLocation) {
 let running = false;
 
 export async function runSupersetSync(pool) {
-  if (!enabled()) {
-    console.warn("[superset] SUPERSET_SESSION_COOKIE belum diset; sync dilewati.");
-    return { skipped: true };
+  const cookie = await resolveCookie(pool);
+  if (!cookie) {
+    console.warn("[superset] cookie sesi belum diisi; sync dilewati.");
+    return { skipped: true, reason: "no_cookie" };
   }
   if (running) {
     console.warn("[superset] siklus sebelumnya masih berjalan; siklus ini dilewati.");
@@ -244,7 +272,7 @@ export async function runSupersetSync(pool) {
     if (!siteRows.length) throw new Error("Tidak ada gudang aktif di site_master.");
 
     const byLocation = new Map(siteRows.map((row) => [String(row.location_id), row.site_code]));
-    const { rows, mode } = await fetchRows(siteRows.map((row) => String(row.location_id)));
+    const { rows, mode } = await fetchRows(siteRows.map((row) => String(row.location_id)), cookie);
 
     // Hanya baris milik gudang aktif yang disimpan, apa pun yang dikirim chart.
     const scoped = rows.filter((row) => byLocation.has(String(row[LOCATION_COLUMN] ?? "")));
@@ -277,10 +305,14 @@ export async function runSupersetSync(pool) {
 }
 
 export function startSupersetSync(pool) {
-  if (!enabled()) {
-    console.warn("[superset] sync tidak aktif (SUPERSET_SESSION_COOKIE kosong).");
-    return;
-  }
+  // Timer SELALU dinyalakan, bahkan ketika cookie belum ada.
+  //
+  // Sebelumnya fungsi ini keluar lebih awal bila cookie kosong, sehingga cookie
+  // yang kemudian diisi lewat layar Pengaturan tidak pernah berlaku sampai
+  // proses dinyalakan ulang — persis kebalikan dari alasan setelan itu dibuat.
+  // Setiap siklus kini memutuskan sendiri; yang tanpa cookie hanya melewatinya
+  // dengan murah.
+  //
   // Sekali saat start supaya master PO terisi tanpa menunggu satu interval
   // penuh setelah deployment.
   runSupersetSync(pool).catch((error) => console.error("[superset]", error.message));

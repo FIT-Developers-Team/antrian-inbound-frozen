@@ -191,9 +191,7 @@ function renderShell() {
 
       <div class="app-main">
         <header class="topbar">
-          <div style="display:flex;align-items:center;gap:12px;min-width:0">
-            <button type="button" class="icon-btn mobile-menu" id="mobile-menu"
-                    aria-label="Buka menu" aria-controls="sidebar" aria-expanded="false">${icon("menu")}</button>
+          <div class="topbar-lead">
             <div class="topbar-context">
               <span class="eyebrow" id="topbar-eyebrow">${esc(PAGES[activePage]?.subtitle || "")}</span>
               <strong id="topbar-title">${esc(brand())}</strong>
@@ -247,27 +245,6 @@ function bindShell() {
     event.currentTarget.setAttribute("aria-expanded", String(!railed));
   });
 
-  document.getElementById("mobile-menu")?.addEventListener("click", (event) => {
-    const sidebar = document.getElementById("sidebar");
-    const open = sidebar.classList.toggle("mobile-open");
-    event.currentTarget.setAttribute("aria-expanded", String(open));
-    if (open) {
-      const backdrop = document.createElement("button");
-      backdrop.className = "nav-backdrop";
-      backdrop.id = "nav-backdrop";
-      backdrop.setAttribute("aria-label", "Tutup menu");
-      backdrop.addEventListener("click", closeMobileNav);
-      document.body.append(backdrop);
-    } else {
-      closeMobileNav();
-    }
-  });
-}
-
-function closeMobileNav() {
-  document.getElementById("sidebar")?.classList.remove("mobile-open");
-  document.getElementById("mobile-menu")?.setAttribute("aria-expanded", "false");
-  document.getElementById("nav-backdrop")?.remove();
 }
 
 /* --------------------------------------------------------------------------
@@ -280,7 +257,6 @@ function navigate(page) {
     return;
   }
   activePage = page;
-  closeMobileNav();
   document.querySelectorAll("[data-page]").forEach((button) => {
     const active = button.dataset.page === page;
     button.classList.toggle("active", active);

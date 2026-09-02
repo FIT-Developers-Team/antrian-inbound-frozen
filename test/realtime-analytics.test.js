@@ -191,7 +191,11 @@ test("lead time diagregasi di database, bukan di tablet", () => {
   assert.match(sql, /create or replace function inbound_lead_time_stats/);
   assert.match(server, /inbound_lead_time_stats/);
   assert.match(api, /export function fetchLeadTime/);
-  assert.doesNotMatch(analytics, /\.reduce\(|percentile/, "browser tidak menghitung ulang statistik");
+  // Yang dijaga adalah AGREGASI, bukan aritmetika apa pun. Menjumlahkan tiga
+  // angka untuk menentukan lebar bar bukan menghitung ulang statistik;
+  // menghitung persentil atau merata-rata ribuan tiket adalah.
+  assert.doesNotMatch(analytics, /percentile|sort\(\(a, b\) => a - b\)/, "persentil dihitung server");
+  assert.doesNotMatch(analytics, /rows\.reduce|tickets\.reduce/, "browser tidak mengagregasi baris tiket");
 });
 
 test("durasi dilaporkan sebagai sebaran, bukan satu rata-rata", () => {

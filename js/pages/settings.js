@@ -137,6 +137,80 @@ function refreshSection() {
   });
 }
 
+/**
+ * Kolom cookie sinkronisasi.
+ *
+ * Hanya untuk ADMIN dan DEVELOPER: memicu penarikan ulang tidak sama dengan
+ * memegang kredensial ke sistem lain.
+ *
+ * Nilainya TIDAK PERNAH dimuat ke dalam kotak. Kotaknya selalu kosong, dan yang
+ * ditampilkan di sebelahnya adalah bentuk cookie yang tersimpan — panjang,
+ * sidik jari pendek, siapa yang terakhir mengubahnya. Itu cukup untuk
+ * memastikan dua orang sedang membicarakan cookie yang sama tanpa satu pun dari
+ * mereka melihatnya, dan menghindarkan rahasia itu dari riwayat browser,
+ * autofill, dan tangkapan layar.
+ */
+function cookieSection(user) {
+  const role = String(user?.role || "").toUpperCase();
+  if (!["ADMIN", "DEVELOPER"].includes(role)) return "";
+
+  const status = settingsStatus?.superset_cookie;
+  const present = Boolean(status?.present);
+
+  return section({
+    eyebrow: "Kredensial",
+    title: "Cookie sesi Superset",
+    action: present
+      ? badge(`${status.length} karakter · ${status.fingerprint}`, "normal")
+      : badge("Belum diisi", "critical"),
+    body: `<div class="dashboard-page">
+      <p class="section-note">
+        Cookie Superset kedaluwarsa berkala. Mengisinya di sini berlaku pada siklus
+        sinkronisasi berikutnya — tanpa deploy ulang, tanpa master PO yang membeku
+        beberapa menit sambil menunggu.
+      </p>
+
+      <label>
+        <span>Nilai cookie <code>session</code></span>
+        <input class="input mono" id="cookie-input" type="password" autocomplete="off"
+               spellcheck="false" placeholder="${present ? "Isi untuk mengganti yang tersimpan" : "Tempel nilai cookie di sini"}" />
+        <small>
+          Buka Superset → DevTools → Application → Cookies, salin nilai cookie <code>session</code>.
+          Boleh ditempel dengan atau tanpa awalan <code>session=</code>.
+        </small>
+      </label>
+
+      <div class="table-actions">
+        <button type="button" class="btn btn-primary" id="cookie-save">${icon("check", 16)} Simpan cookie</button>
+        ${present ? `<button type="button" class="btn btn-ghost" id="cookie-clear">Hapus</button>` : ""}
+      </div>
+
+      ${
+        present
+          ? `<p class="section-note">Terakhir diubah ${esc(formatFull(status.updated_at))}${
+              status.updated_by ? ` oleh ${esc(status.updated_by)}` : ""
+            }.</p>`
+          : ""
+      }
+
+      <p class="sync-result" id="cookie-result" hidden></p>
+
+      <div class="banner banner-warn">
+        <strong>${icon("alert", 16)} Tersimpan di database</strong>
+        <p>
+          Berbeda dari variabel lingkungan, nilai ini ikut tersimpan di Postgres dan ikut
+          ter-backup. Nilainya tidak pernah dikirim kembali ke layar mana pun, tetapi siapa
+          pun yang punya akses baca ke database dapat melihatnya. Bila itu tidak dapat
+          diterima, kosongkan kolom ini dan tetap pakai <code>SUPERSET_SESSION_COOKIE</code>.
+        </p>
+      </div>
+    </div>`,
+  });
+}
+
+/** Bentuk setelan, dimuat sekali per kunjungan halaman. */
+let settingsStatus = null;
+
 export function render(root) {
   const site = currentSite();
   const user = api.getUser();
@@ -205,6 +279,8 @@ export function render(root) {
                  </p>`,
         })}
 
+        ${cookieSection(user)}
+
         ${refreshSection()}
 
         ${sourceSection()}
@@ -255,6 +331,61 @@ export function render(root) {
     toast(`Beralih ke gudang ${event.target.value}.`);
     globalThis.dispatchEvent(new CustomEvent("inbound:site-changed"));
   });
+
+  // Bentuk setelan dimuat sekali per kunjungan. Peran yang tidak berhak tidak
+  // pernah meminta endpoint-nya sama sekali.
+  const role = String(user?.role || "").toUpperCase();
+  if (settingsStatus === null && ["ADMIN", "DEVELOPER"].includes(role)) {
+    settingsStatus = {};
+    api
+      .fetchSettingsStatus()
+      .then((status) => {
+        settingsStatus = status;
+        render(root);
+      })
+      .catch(() => {
+        settingsStatus = {};
+      });
+  }
+
+  const showCookieResult = (text, isError) => {
+    const slot = root.querySelector("#cookie-result");
+    if (!slot) return;
+    slot.textContent = text;
+    slot.className = isError ? "sync-result is-error" : "sync-result";
+    slot.hidden = false;
+  };
+
+  const saveCookie = async (value, event) =>
+    withBusy(event.currentTarget, async () => {
+      try {
+        const result = await api.setSyncCookie(value);
+        settingsStatus = { superset_cookie: result.status };
+        // Menyimpan cookie baru hampir selalu diikuti keinginan untuk tahu
+        // apakah ia benar. Sinkronisasi langsung dicoba, jadi jawabannya datang
+        // sekarang alih-alih pada siklus lima menit berikutnya.
+        const sync = value ? await api.syncNow().catch((error) => ({ error: error.message })) : null;
+        render(root);
+        if (!value) return showCookieResult("Cookie dihapus; sinkronisasi kembali memakai variabel lingkungan.", false);
+        if (sync?.error) return showCookieResult(`Cookie tersimpan, tetapi sinkronisasi gagal: ${sync.error}`, true);
+        if (sync?.skipped) return showCookieResult(`Cookie tersimpan. ${sync.message}`, false);
+        showCookieResult(`Cookie tersimpan dan diuji: ${sync?.written ?? 0} PO tersinkron.`, false);
+      } catch (error) {
+        showCookieResult(error.message, true);
+        toast(error.message, "error");
+      }
+    });
+
+  root.querySelector("#cookie-save")?.addEventListener("click", (event) => {
+    const value = root.querySelector("#cookie-input")?.value?.trim() || "";
+    if (!value) {
+      showCookieResult("Isi nilai cookie terlebih dahulu.", true);
+      return undefined;
+    }
+    return saveCookie(value, event);
+  });
+
+  root.querySelector("#cookie-clear")?.addEventListener("click", (event) => saveCookie("", event));
 
   root.querySelector("#force-refresh")?.addEventListener("click", (event) =>
     withBusy(event.currentTarget, async () => {

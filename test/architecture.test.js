@@ -180,8 +180,20 @@ test("tombol tanpa teks memiliki nama yang dapat diakses", () => {
 test("keadaan buka-tutup diumumkan lewat aria-expanded", () => {
   const app = read("js/app.js");
   assert.match(app, /id="rail-toggle"[\s\S]*?aria-expanded=/);
-  assert.match(app, /id="mobile-menu"[\s\S]*?aria-expanded="false"/);
-  assert.match(app, /setAttribute\("aria-expanded", String\(open\)\)/);
+  assert.match(app, /setAttribute\("aria-expanded", String\(!railed\)\)/);
+});
+
+test("tidak ada laci navigasi yang tersisa", () => {
+  // Hamburger dan lacinya mati di SETIAP rentang lebar: di atas 900px sidebar
+  // selalu tampak, di bawahnya navigasi berada di bilah bawah. Yang tertinggal
+  // hanyalah tombol yang membuka panel kosong — persis jenis detail tak terlihat
+  // yang membuat aplikasi terasa setengah jadi.
+  const app = read("js/app.js");
+  const css = read("style.css");
+  ["mobile-menu", "nav-backdrop", "closeMobileNav", "mobile-open"].forEach((leftover) => {
+    assert.doesNotMatch(app, new RegExp(leftover), `${leftover} sudah tidak dipakai`);
+    assert.doesNotMatch(css, new RegExp(leftover), `${leftover} sudah tidak dipakai di CSS`);
+  });
 });
 
 test("toast diumumkan tanpa mencuri fokus", () => {

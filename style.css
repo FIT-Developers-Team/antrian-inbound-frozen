@@ -348,8 +348,6 @@ kbd,
 
 .icon-btn {
   display: grid;
-  width: 40px;
-  height: 40px;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid var(--line);
@@ -496,14 +494,6 @@ kbd,
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.mobile-menu {
-  display: none;
-}
-
-.nav-backdrop {
-  display: none;
 }
 
 .eyebrow {
@@ -2048,6 +2038,92 @@ select.input {
   background: currentcolor;
 }
 
+/* Bar di dalam sel tabel. Angka sendirian menuntut pembacanya membandingkan
+   sembilan bilangan; bar di sebelahnya membuat urutannya terbaca sekali lihat,
+   dan angkanya tetap ada untuk yang perlu menyalinnya. */
+.bar-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 132px;
+}
+
+.bar-track {
+  position: relative;
+  flex: 1;
+  min-width: 44px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+
+.bar-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+}
+
+.bar-track i.is-critical {
+  background: var(--status-critical);
+}
+
+.bar-cell b {
+  min-width: 52px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pencacah pembatalan. Angka nol tidak pernah dibuat mencolok; yang bukan nol
+   selalu. */
+.cancel-count {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--status-critical) 15%, transparent);
+  color: var(--status-critical);
+  font-weight: 700;
+}
+
+/* Daftar alasan pembatalan. */
+.reason-list {
+  display: grid;
+  gap: 9px;
+}
+
+.reason {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 34px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.reason-label {
+  color: var(--text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reason b {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .reason {
+    grid-template-columns: minmax(0, 1fr) 60px 30px;
+    font-size: 12px;
+  }
+
+  .bar-cell {
+    min-width: 104px;
+  }
+}
+
 /* Tooltip grafik. Satu simpul dipakai bersama seluruh grafik, dipasang di
    <body> supaya tidak pernah terpotong oleh container yang meng-overflow. */
 /* Spanduk peringatan dan langkah perbaikan di layar Pengaturan. Cookie Superset
@@ -2304,12 +2380,6 @@ select.input {
     visibility: hidden;
   }
 
-  .sidebar.mobile-open {
-    pointer-events: auto;
-    transform: translateX(0);
-    visibility: visible;
-  }
-
   .sidebar.rail {
     width: min(280px, 86vw);
   }
@@ -2324,19 +2394,6 @@ select.input {
   .sidebar.rail .brand-mark > span:last-child,
   .sidebar.rail .sidebar-user {
     display: revert;
-  }
-
-  .nav-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 28;
-    display: block;
-    border: 0;
-    background: rgb(3 10 22 / 50%);
-  }
-
-  .mobile-menu {
-    display: grid;
   }
 
   .rail-toggle {
@@ -2422,20 +2479,6 @@ select.input {
 }
 
 /* Perangkat sentuh: target minimal 44px sesuai WCAG 2.5.5. */
-@media (pointer: coarse) {
-  .btn,
-  .nav-link,
-  .input,
-  .icon-btn,
-  .fleet-option {
-    min-height: 46px;
-  }
-
-  .btn-sm {
-    min-height: 40px;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -2476,6 +2519,85 @@ select.input {
   .queue-card {
     border-color: #999;
     box-shadow: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * 17. Ukuran kontrol — satu skala untuk semuanya
+ *
+ * Sebelum bagian ini, tinggi kontrol di aplikasi ini ada empat macam yang tidak
+ * pernah sengaja dipilih: input 44px, tombol 40px, tombol kecil 34px, tombol
+ * ikon 40px, dan ringkasan disclosure 38px. Akibatnya satu baris form yang
+ * memuat input dan tombol di sebelahnya tingginya tidak sama — cacat yang
+ * terlihat setiap kali dua kontrol bersebelahan, dan tidak pernah terlihat
+ * ketika masing-masing diperiksa sendiri.
+ *
+ * Sekarang ada dua ukuran saja, keduanya token:
+ *
+ *   --control-h     kontrol utama. Sama dengan tinggi input, sehingga apa pun
+ *                   yang berdiri di samping input sejajar dengannya.
+ *   --control-h-sm  kontrol sekunder di dalam kartu, tempat empat tombol harus
+ *                   muat berdampingan.
+ *
+ * Pada perangkat sentuh keduanya naik ke 46px. Itu bukan sekadar mengikuti
+ * angka pedoman: papan ini disentuh dengan sarung tangan di ruang dingin, dan
+ * jari bersarung tidak setepat kursor.
+ * ----------------------------------------------------------------------- */
+:root {
+  --control-h: 40px;
+  --control-h-sm: 34px;
+  --control-radius: 9px;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --control-h: 46px;
+    --control-h-sm: 46px;
+  }
+}
+
+.btn,
+.nav-link,
+.input,
+.fleet-option {
+  min-height: var(--control-h);
+}
+
+.btn-sm {
+  min-height: var(--control-h-sm);
+}
+
+/* Tombol ikon harus BUJUR SANGKAR, dan ukurannya hidup di SATU tempat.
+   Sebelumnya lebarnya ditetapkan 40px di aturan dasar sementara perangkat
+   sentuh hanya menaikkan tingginya — hasilnya 40 lebar x 46 tinggi, lebih
+   sempit dari pedoman pada sumbu yang justru paling sering meleset. */
+.icon-btn {
+  width: var(--control-h);
+  height: var(--control-h);
+  min-height: var(--control-h);
+}
+
+/* Kontrol yang sebelumnya tidak tersentuh aturan ukuran sama sekali. Semuanya
+   diketuk sama seringnya dengan tombol biasa. */
+.filter-more > summary,
+.chart-table summary,
+.po-suggestion {
+  min-height: var(--control-h);
+}
+
+/* Tombol hapus pada chip PO. Ia yang paling kecil di seluruh aplikasi dan
+   paling sering meleset: satu ketukan salah menghapus PO yang benar. */
+.po-chip button {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  min-height: 26px;
+}
+
+@media (pointer: coarse) {
+  .po-chip button {
+    min-width: 34px;
+    min-height: 34px;
   }
 }
 
@@ -2569,7 +2691,10 @@ select.input {
   }
 }
 
-@media (max-width: 720px) {
+/* Bilah bawah berlaku sampai 900px, bukan 720px: rentang 721-900 adalah tablet
+   portrait — perangkat yang paling butuh navigasi terjangkau ibu jari, dan yang
+   justru dulu mendapat laci yang harus dibuka dari pojok kiri atas. */
+@media (max-width: 900px) {
   /* -- Navigasi bawah -----------------------------------------------------
      Laci samping menuntut dua ketukan dan jangkauan ke pojok kiri ATAS —
      sudut terjauh dari ibu jari pada perangkat yang dipegang sambil berdiri.
@@ -2604,19 +2729,14 @@ select.input {
     display: none;
   }
 
-  /* Keadaan laci tidak berlaku lagi pada bilah bawah. Blok laci di 900px
-     menetapkan lebar 280px, `visibility: hidden`, dan transform yang
-     mendorongnya keluar layar — semuanya benar untuk laci, semuanya salah
-     untuk bilah bawah. */
+  /* Lebar penuh dinyatakan ulang: blok 900px masih menyempitkan sidebar untuk
+     keadaan `rail` (menu terciut di desktop), dan keadaan itu tidak berlaku
+     pada bilah bawah. */
   .sidebar,
-  .sidebar.rail,
-  .sidebar.mobile-open {
+  .sidebar.rail {
     width: 100%;
     max-width: none;
-    visibility: visible;
-    pointer-events: auto;
     box-shadow: none;
-    transform: none;
   }
 
   .sidebar.rail .nav-link span {
@@ -2662,12 +2782,6 @@ select.input {
 
   .sidebar .nav-link {
     position: relative;
-  }
-
-  /* Laci dan backdrop tidak lagi berlaku. */
-  .mobile-menu,
-  .nav-backdrop {
-    display: none;
   }
 
   /* Ruang supaya bilah bawah tidak pernah menutupi isi terakhir. */

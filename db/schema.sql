@@ -1373,3 +1373,194 @@ returns jsonb language sql stable as $fn$
       limit 1),
     'null'::jsonb);
 $fn$;
+
+-- ---------------------------------------------------------------------------
+-- 21. Setelan yang dapat diubah tanpa deploy
+--
+-- Satu tabel kunci-nilai, dan sejauh ini hanya menyimpan satu hal: cookie sesi
+-- Superset.
+--
+-- KEPUTUSAN YANG PERLU DISADARI
+--
+-- Sebelumnya cookie itu hanya hidup sebagai variabel lingkungan. Itu tempat
+-- yang lebih aman — ia tidak pernah menyentuh database, tidak ikut ter-backup,
+-- dan tidak dapat dibaca siapa pun yang punya akses baca ke Postgres.
+--
+-- Harganya operasional: cookie Superset kedaluwarsa secara berkala, dan
+-- menggantinya berarti menyunting setelan lingkungan lalu MENUNGGU DEPLOY ULANG
+-- SELESAI. Di gudang yang sedang berjalan, itu berarti master PO membeku selama
+-- beberapa menit setiap kali — pada saat yang justru paling tidak tepat, karena
+-- cookie biasanya mati saat sedang dipakai.
+--
+-- Menyimpannya di database menukar sebagian keamanan itu dengan waktu pulih
+-- yang hampir seketika. Yang menahan pertukaran itu tetap masuk akal:
+--
+--   * Nilainya TIDAK PERNAH dikembalikan ke browser. Yang dilaporkan hanya
+--     sidik jari pendek dan jam terakhir diubah.
+--   * Hanya ADMIN dan DEVELOPER yang boleh menuliskannya.
+--   * Variabel lingkungan tetap menjadi nilai bawaan; setelan ini menimpanya
+--     hanya bila benar-benar diisi.
+--   * Siapa yang mengubah dan kapan ikut tercatat.
+-- ---------------------------------------------------------------------------
+create table if not exists app_settings (
+  setting_key text primary key,
+  setting_value text,
+  updated_by text,
+  updated_at timestamptz not null default now()
+);
+
+/**
+ * Menuliskan satu setelan.
+ *
+ * Nilai kosong MENGHAPUS barisnya, bukan menyimpan string kosong: "tidak diisi"
+ * dan "diisi dengan kosong" harus berarti hal yang sama, supaya menghapus
+ * setelan mengembalikan perilaku ke variabel lingkungan alih-alih mematikan
+ * sinkronisasi diam-diam.
+ */
+create or replace function inbound_set_setting(p_key text, p_value text, p_actor text default null)
+returns jsonb language plpgsql as $fn$
+declare v_clean text := nullif(btrim(coalesce(p_value, '')), '');
+begin
+  if p_key is null or btrim(p_key) = '' then raise exception 'Kunci setelan wajib diisi.'; end if;
+
+  if v_clean is null then
+    delete from app_settings where setting_key = p_key;
+    return jsonb_build_object('key', p_key, 'cleared', true);
+  end if;
+
+  insert into app_settings(setting_key, setting_value, updated_by, updated_at)
+  values (p_key, v_clean, nullif(btrim(coalesce(p_actor, '')), ''), now())
+  on conflict (setting_key) do update
+    set setting_value = excluded.setting_value,
+        updated_by = excluded.updated_by,
+        updated_at = now();
+
+  return jsonb_build_object('key', p_key, 'cleared', false, 'length', length(v_clean));
+end; $fn$;
+
+/**
+ * Melaporkan BENTUK setelan, bukan isinya.
+ *
+ * Sengaja tidak pernah mengembalikan nilainya. Layar hanya perlu tahu apakah
+ * cookie sudah terisi, sepanjang apa, siapa yang terakhir mengubahnya, dan
+ * kapan — dan sidik jari pendek supaya dua orang dapat memastikan sedang
+ * membicarakan cookie yang sama tanpa satu pun dari mereka melihatnya.
+ */
+create or replace function inbound_setting_status(p_key text)
+returns jsonb language sql stable as $fn$
+  select coalesce(
+    (select jsonb_build_object(
+       'present', true,
+       'length', length(setting_value),
+       'fingerprint', substr(md5(setting_value), 1, 8),
+       'updated_by', updated_by,
+       'updated_at', updated_at)
+       from app_settings where setting_key = p_key),
+    jsonb_build_object('present', false));
+$fn$;
+
+-- ---------------------------------------------------------------------------
+-- 22. Vendor, dok, dan pembatalan
+--
+-- Tiga pertanyaan yang selama ini hanya bisa dijawab dengan membuka CSV dan
+-- memutar pivot di Excel:
+--
+--   Vendor mana yang memakan waktu dok paling banyak?
+--     Bukan yang paling sering datang — yang paling lama ditangani. Dua hal
+--     itu berbeda, dan yang kedua yang menentukan antrean.
+--
+--   Vendor mana yang drivernya tidak muncul?
+--     Tiket batal adalah slot dok yang sudah dijanjikan lalu terbuang. Ia
+--     tidak terlihat di rata-rata mana pun karena tiket batal tidak punya
+--     durasi untuk dirata-rata.
+--
+--   Dok mana yang paling sibuk?
+--     Sembilan pintu jarang terpakai merata. Yang selalu penuh dan yang jarang
+--     tersentuh sama-sama memberi tahu sesuatu tentang cara gate dibagikan.
+-- ---------------------------------------------------------------------------
+create or replace function inbound_vendor_stats(
+  p_site_code text default null,
+  p_from date default null,
+  p_to date default null,
+  p_limit integer default 20
+)
+returns jsonb language sql stable as $fn$
+  with bounds as (
+    select coalesce(p_from, (timezone('Asia/Jakarta', now()) - interval '13 days')::date) as from_date,
+           coalesce(p_to, (timezone('Asia/Jakarta', now()))::date) as to_date
+  ),
+  scoped as (
+    select
+      coalesce(nullif(btrim(b.vendor_name), ''), '(tanpa vendor)') as vendor,
+      b.status, b.gate, b.total_sku, b.total_qty, b.expired_reason,
+      case when b.arrived_at is not null and b.sla_started_at is not null
+           then extract(epoch from (b.sla_started_at - b.arrived_at)) / 60 end as wait_minutes,
+      case when b.sla_started_at is not null and b.sla_stopped_at is not null
+           then extract(epoch from (b.sla_stopped_at - b.sla_started_at)) / 60 end as unload_minutes,
+      case when b.sla_target_hours > 0 and b.sla_deadline_at is not null and b.sla_stopped_at is not null
+           then b.sla_stopped_at <= b.sla_deadline_at end as met_sla
+    from inbound_board b, bounds x
+    where b.site_code = any(inbound_scoped_sites(p_site_code))
+      and b.operational_date between x.from_date and x.to_date
+  ),
+  vendors as (
+    select coalesce(jsonb_agg(row order by sort_minutes desc nulls last, sort_tickets desc), '[]'::jsonb) as payload
+      from (
+        select
+          -- Diurutkan menurut TOTAL MENIT DOK, bukan jumlah tiket. Vendor yang
+          -- datang sepuluh kali dengan muatan kecil tidak sama beratnya dengan
+          -- vendor yang datang tiga kali dan menahan dok empat jam tiap kali.
+          coalesce(sum(unload_minutes), 0) as sort_minutes,
+          count(*) as sort_tickets,
+          jsonb_build_object(
+            'vendor', vendor,
+            'tickets', count(*),
+            'completed', count(*) filter (where status = 'COMPLETED'),
+            'cancelled', count(*) filter (where status = 'EXPIRED'),
+            'dock_minutes', round(coalesce(sum(unload_minutes), 0))::int,
+            'wait_p50', round(percentile_cont(0.5) within group (order by wait_minutes))::int,
+            'unload_p50', round(percentile_cont(0.5) within group (order by unload_minutes))::int,
+            'unload_p90', round(percentile_cont(0.9) within group (order by unload_minutes))::int,
+            'total_sku', coalesce(sum(total_sku), 0)::int,
+            'total_qty', round(coalesce(sum(total_qty), 0))::int,
+            'sla_judged', count(*) filter (where met_sla is not null),
+            'sla_met', count(*) filter (where met_sla)
+          ) as row
+        from scoped group by vendor
+        order by sort_minutes desc nulls last, sort_tickets desc
+        limit greatest(least(coalesce(p_limit, 20), 100), 1)
+      ) v
+  ),
+  gates as (
+    -- Seluruh gate aktif selalu dikembalikan, termasuk yang tidak terpakai
+    -- sama sekali: dok yang menganggur adalah temuan, bukan baris kosong.
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'gate', g.gate_name,
+             'tickets', coalesce(u.tickets, 0),
+             'dock_minutes', coalesce(u.dock_minutes, 0),
+             'unload_p50', u.unload_p50
+           ) order by g.site_code, g.gate_index), '[]'::jsonb) as payload
+      from inbound_active_gates() g
+      left join (
+        select gate,
+               count(*)::int as tickets,
+               round(coalesce(sum(unload_minutes), 0))::int as dock_minutes,
+               round(percentile_cont(0.5) within group (order by unload_minutes))::int as unload_p50
+          from scoped where gate is not null group by gate
+      ) u on u.gate = g.gate_name
+  ),
+  cancellations as (
+    select coalesce(jsonb_agg(jsonb_build_object('reason', reason, 'tickets', tickets)
+           order by tickets desc), '[]'::jsonb) as payload
+      from (
+        select coalesce(nullif(btrim(expired_reason), ''), 'Tanpa alasan tercatat') as reason,
+               count(*)::int as tickets
+          from scoped where status = 'EXPIRED' group by 1
+      ) c
+  )
+  select jsonb_build_object(
+    'by_vendor', vendors.payload,
+    'by_gate', gates.payload,
+    'cancellations', cancellations.payload
+  ) from vendors, gates, cancellations;
+$fn$;

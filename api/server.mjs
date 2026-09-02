@@ -234,7 +234,7 @@ function authStatus() {
 /* --------------------------------------------------------------------------
  * Otorisasi
  * ----------------------------------------------------------------------- */
-const READ_ACTIONS = ["board", "history", "sites", "source_freshness", "lead_time", "events", "po_search"];
+const READ_ACTIONS = ["board", "history", "sites", "source_freshness", "lead_time", "events", "po_search", "settings_status", "vendor_stats"];
 const ALL_ROLES = KNOWN_ROLES;
 
 const WRITE_ACTIONS = {
@@ -250,6 +250,9 @@ const WRITE_ACTIONS = {
   // dan menunggu siklus lima menit berikutnya setelah menggantinya adalah lima
   // menit yang dihabiskan menatap layar yang belum berubah.
   sync_now: ["SPV", "ADMIN", "DEVELOPER"],
+  // Menulis cookie Superset. Lebih sempit daripada sync_now: memicu penarikan
+  // ulang tidak sama dengan memegang kredensial ke sistem lain.
+  set_sync_cookie: ["ADMIN", "DEVELOPER"],
   delete_tickets_by_date: ["ADMIN", "DEVELOPER"],
   delete_single_ticket: ["ADMIN", "DEVELOPER"],
 };
@@ -552,6 +555,18 @@ async function handle(request, response) {
     return true;
   }
 
+  if (request.method === "GET" && action === "vendor_stats") {
+    return sendJson(request, response, 200, {
+      ok: true,
+      data: await rpc("inbound_vendor_stats", [
+        site,
+        url.searchParams.get("from") || null,
+        url.searchParams.get("to") || null,
+        Number(url.searchParams.get("limit")) || 20,
+      ]),
+    });
+  }
+
   if (request.method === "GET" && action === "lead_time") {
     return sendJson(request, response, 200, {
       ok: true,
@@ -560,6 +575,14 @@ async function handle(request, response) {
         url.searchParams.get("from") || null,
         url.searchParams.get("to") || null,
       ]),
+    });
+  }
+
+  if (request.method === "GET" && action === "settings_status") {
+    // Melaporkan BENTUK setelan, tidak pernah isinya.
+    return send(response, 200, {
+      ok: true,
+      data: { superset_cookie: await rpc("inbound_setting_status", ["superset_session_cookie"]) },
     });
   }
 
@@ -619,6 +642,24 @@ async function handle(request, response) {
     return send(response, 200, {
       ok: true,
       data: await rpc(TICKET_RPC[action], [JSON.stringify(body), JSON.stringify(actor)]),
+    });
+  }
+
+  if (request.method === "POST" && action === "set_sync_cookie") {
+    const value = String(body.cookie ?? "");
+    if (value.length > 4000) {
+      return send(response, 400, { ok: false, message: "Nilai cookie terlalu panjang." });
+    }
+    const saved = await rpc("inbound_set_setting", ["superset_session_cookie", value, session.username]);
+    // Nilainya tidak pernah dikembalikan — hanya bentuknya, supaya layar dapat
+    // menegaskan bahwa yang tersimpan memang yang baru saja diketik.
+    console.log(`[superset] cookie ${saved?.cleared ? "dihapus" : "diperbarui"} oleh ${session.username}`);
+    return send(response, 200, {
+      ok: true,
+      data: {
+        cleared: Boolean(saved?.cleared),
+        status: await rpc("inbound_setting_status", ["superset_session_cookie"]),
+      },
     });
   }
 

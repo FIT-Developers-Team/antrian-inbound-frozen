@@ -18,6 +18,7 @@ const board = read("js/pages/board.js");
 const store = read("js/store.js");
 const settings = read("js/pages/settings.js");
 const sync = read("api/sync-superset.mjs");
+const analyticsPage = read("js/pages/analytics.js");
 
 /**
  * Lapisan ponsel milik putaran ini.
@@ -145,14 +146,56 @@ test("navigasi pindah ke ibu jari di ponsel", () => {
   assert.match(mobile, /\.workspace \{[\s\S]{0,120}padding-bottom:/);
 });
 
-test("keadaan laci tidak bocor ke bilah bawah", () => {
-  // Blok laci di 900px menetapkan lebar 280px, visibility hidden, dan transform
-  // yang mendorongnya keluar layar. Tanpa penimpaan, bilah bawah menyusut
-  // menjadi 280 piksel dan tabnya tidak sama lebar.
-  const mobile = mobileLayer;
-  assert.match(mobile, /\.sidebar\.mobile-open \{[\s\S]{0,200}transform: none;|transform: none;/);
-  assert.match(mobile, /visibility: visible;/);
-  assert.match(mobile, /width: 100%;/);
+test("laci navigasi dihapus, bukan sekadar disembunyikan", () => {
+  // Hamburger dan lacinya mati di SETIAP rentang lebar: di atas 900px sidebar
+  // selalu tampak, di bawahnya navigasi ada di bilah bawah. Yang tertinggal
+  // hanyalah tombol yang membuka panel kosong.
+  //
+  // Rentang 721-900px adalah yang paling jelas salah: itu tablet portrait —
+  // perangkat yang justru paling butuh navigasi terjangkau ibu jari — dan
+  // justru di sana ia mendapat laci yang harus dibuka dari pojok kiri atas.
+  ["mobile-open", "nav-backdrop", "mobile-menu"].forEach((leftover) => {
+    assert.doesNotMatch(css, new RegExp(leftover), `${leftover} sudah tidak dipakai`);
+  });
+  // Bilah bawah harus berlaku sampai 900px, bukan 720px: rentang 721-900
+  // adalah tablet portrait, dan di sanalah laci dulu masih aktif.
+  assert.match(mobileLayer, /@media \(max-width: 900px\)/, "bilah bawah mencakup rentang tablet");
+});
+
+test("ukuran kontrol memakai satu skala, bukan empat angka yang tidak sengaja", () => {
+  // Sebelumnya: input 44px, tombol 40px, tombol kecil 34px, tombol ikon 40px,
+  // ringkasan disclosure 38px. Satu baris form yang memuat input dan tombol di
+  // sebelahnya karena itu tingginya tidak pernah sama.
+  assert.match(css, /--control-h: 40px;/);
+  assert.match(css, /--control-h-sm: 34px;/);
+  assert.match(css, /\.btn,\s*\.nav-link,\s*\.input,\s*\.fleet-option \{\s*min-height: var\(--control-h\);/);
+  assert.match(css, /\.btn-sm \{\s*min-height: var\(--control-h-sm\);/);
+
+  // Tombol ikon harus BUJUR SANGKAR: sebelumnya hanya tingginya yang dinaikkan
+  // pada perangkat sentuh, sehingga ia menjadi 40 lebar x 46 tinggi.
+  assert.match(css, /\.icon-btn \{\s*width: var\(--control-h\);\s*height: var\(--control-h\);/);
+
+  // Perangkat sentuh menaikkan keduanya. Papan ini disentuh dengan sarung
+  // tangan di ruang dingin.
+  const coarse = css.slice(css.indexOf("@media (pointer: coarse)"));
+  assert.match(coarse.slice(0, 200), /--control-h: 46px;/);
+  assert.match(coarse.slice(0, 200), /--control-h-sm: 46px;/);
+
+  // SATU blok coarse untuk ukuran kontrol. Dua blok yang menetapkan tinggi
+  // selektor yang sama adalah persis cara dua aturan saling membatalkan tanpa
+  // ada yang menyadarinya sampai salah satunya dipindahkan.
+  const heightBlocks = [...css.matchAll(/@media \(pointer: coarse\)/g)];
+  assert.ok(heightBlocks.length <= 2, `blok coarse harus sedikit dan jelas, ada ${heightBlocks.length}`);
+  assert.doesNotMatch(css, /\.btn,\s*\.nav-link,\s*\.input,\s*\.icon-btn,\s*\.fleet-option \{\s*min-height: 46px/);
+});
+
+test("kontrol yang dulu terlewat kini ikut berukuran layak sentuh", () => {
+  // Ringkasan disclosure, saran PO, dan tombol hapus chip diketuk sama
+  // seringnya dengan tombol biasa, tetapi tidak pernah tersentuh aturan ukuran.
+  assert.match(css, /\.filter-more > summary,\s*\.chart-table summary,\s*\.po-suggestion \{/);
+  // Tombol hapus chip PO adalah yang terkecil di seluruh aplikasi, dan satu
+  // ketukan meleset menghapus PO yang benar.
+  assert.match(css, /\.po-chip button \{[\s\S]{0,200}min-height: 26px;/);
 });
 
 test("filter lanjutan terlipat di ponsel tetapi tetap menyatakan keadaannya", () => {
@@ -204,4 +247,110 @@ test("gaya tetap satu berkas tanpa framework", async () => {
   assert.ok(Object.keys(STATUS).length >= 5, "status tiket tetap utuh");
   assert.equal((html.match(/rel="stylesheet"/g) || []).length, 2, "hanya font Google dan style.css");
   assert.doesNotMatch(html, /tailwind|bootstrap|cdn\.jsdelivr/i);
+});
+
+/* -- Cookie sinkronisasi yang dapat diisi dari layar ------------------------ */
+
+test("cookie disimpan lewat setelan, dengan lingkungan sebagai cadangan", () => {
+  // Cookie Superset kedaluwarsa berkala, dan menggantinya lewat variabel
+  // lingkungan berarti menunggu deploy ulang selesai — beberapa menit master PO
+  // membeku, pada saat yang justru paling tidak tepat.
+  assert.match(sql, /create table if not exists app_settings/);
+  assert.match(sql, /create or replace function inbound_set_setting/);
+  assert.match(sync, /async function resolveCookie\(pool\)/);
+  // Urutannya penting: lingkungan tetap bawaan, setelan menimpanya hanya bila
+  // benar-benar diisi.
+  const resolve = sync.slice(sync.indexOf("async function resolveCookie"));
+  const body = resolve.slice(0, resolve.indexOf("\n}"));
+  assert.ok(
+    body.indexOf("app_settings") < body.indexOf("process.env.SUPERSET_SESSION_COOKIE"),
+    "database dibaca lebih dulu, lingkungan menjadi cadangan",
+  );
+});
+
+test("nilai cookie tidak pernah dikembalikan ke browser", () => {
+  // Yang dilaporkan hanya bentuknya: panjang, sidik jari pendek, siapa yang
+  // terakhir mengubahnya. Cukup untuk memastikan dua orang membicarakan cookie
+  // yang sama tanpa satu pun dari mereka melihatnya.
+  const status = sql.slice(sql.indexOf("create or replace function inbound_setting_status"));
+  const body = status.slice(0, status.indexOf("$fn$;"));
+  // Setiap penyebutan kolom nilainya HARUS terbungkus length() atau md5().
+  // Satu saja yang telanjang berarti rahasianya ikut terkirim — dan mencari
+  // pola "setting_value)" saja tidak cukup, karena `length(setting_value)` juga
+  // berakhir demikian.
+  const mentions = [...body.matchAll(/(\w*)\(setting_value\)/g)].map((m) => m[1]);
+  const naked = body.replace(/(length|md5)\(setting_value\)/g, "").includes("setting_value");
+  assert.deepEqual([...new Set(mentions)].sort(), ["length", "md5"]);
+  assert.ok(!naked, "nilai cookie hanya boleh muncul di dalam length() atau md5()");
+  assert.match(body, /'fingerprint', substr\(md5\(setting_value\), 1, 8\)/);
+  assert.match(body, /'length', length\(setting_value\)/);
+
+  // Kotaknya pun tidak pernah diisi nilai yang tersimpan.
+  assert.match(settings, /id="cookie-input" type="password"/);
+  assert.doesNotMatch(settings, /value="\$\{esc\(status\.setting_value/);
+});
+
+test("menulis cookie lebih sempit daripada memicu sync", () => {
+  // Memicu penarikan ulang tidak sama dengan memegang kredensial ke sistem lain.
+  assert.match(server, /set_sync_cookie: \["ADMIN", "DEVELOPER"\]/);
+  assert.match(server, /sync_now: \["SPV", "ADMIN", "DEVELOPER"\]/);
+  assert.match(settings, /\["ADMIN", "DEVELOPER"\]\.includes\(role\)/);
+});
+
+test("sinkronisasi membaca cookie tiap siklus, bukan sekali saat start", () => {
+  // Sebelumnya startSupersetSync keluar lebih awal bila cookie kosong, sehingga
+  // cookie yang kemudian diisi lewat layar tidak pernah berlaku sampai proses
+  // dinyalakan ulang — persis kebalikan dari alasan setelan itu dibuat.
+  const start = sync.slice(sync.indexOf("export function startSupersetSync"));
+  assert.doesNotMatch(start.slice(0, 400), /return;/, "timer selalu dinyalakan");
+  assert.match(sync, /const cookie = await resolveCookie\(pool\)/);
+});
+
+test("menyimpan cookie langsung mengujinya", () => {
+  // Menyimpan cookie baru hampir selalu diikuti keinginan untuk tahu apakah ia
+  // benar. Menunggu siklus lima menit berikutnya adalah lima menit menatap
+  // layar yang belum berubah.
+  assert.match(settings, /await api\.syncNow\(\)/);
+  assert.match(settings, /Cookie tersimpan dan diuji/);
+});
+
+/* -- Informasi dashboard --------------------------------------------------- */
+
+test("kinerja vendor diagregasi di database", () => {
+  assert.match(sql, /create or replace function inbound_vendor_stats/);
+  assert.match(server, /action === "vendor_stats"/);
+  assert.match(read("js/api.js"), /export function fetchVendorStats/);
+});
+
+test("vendor diurutkan menurut waktu dok, bukan jumlah tiket", () => {
+  // Vendor yang datang sepuluh kali dengan muatan kecil tidak sama beratnya
+  // dengan vendor yang datang tiga kali dan menahan dok empat jam tiap kali —
+  // dan yang kedua itulah yang menentukan panjang antrean di luar.
+  const fn = sqlCode.slice(sqlCode.indexOf("create or replace function inbound_vendor_stats"));
+  assert.match(fn.slice(0, 3000), /order by sort_minutes desc nulls last, sort_tickets desc/);
+  assert.match(fn.slice(0, 3000), /'dock_minutes', round\(coalesce\(sum\(unload_minutes\), 0\)\)::int/);
+});
+
+test("tiket batal dihitung terpisah, bukan hilang dari rata-rata", () => {
+  // Tiket batal tidak punya durasi untuk dirata-rata: ia lenyap dari setiap
+  // angka lain, padahal ia slot dok yang sudah dijanjikan lalu terbuang.
+  assert.match(sql, /'cancelled', count\(\*\) filter \(where status = 'EXPIRED'\)/);
+  assert.match(sql, /Tanpa alasan tercatat/);
+  assert.match(analyticsPage, /function cancellationList\(reasons\)/);
+  assert.match(analyticsPage, /class="cancel-count"/);
+});
+
+test("dok yang menganggur tetap dilaporkan", () => {
+  // Dok yang tidak terpakai sama sekali adalah temuan, bukan baris kosong yang
+  // boleh dilewati.
+  const fn = sqlCode.slice(sqlCode.indexOf("create or replace function inbound_vendor_stats"));
+  assert.match(fn.slice(0, 4000), /from inbound_active_gates\(\) g\s*left join/);
+  assert.match(analyticsPage, /function gateChart\(gateRows\)/);
+});
+
+test("dua permintaan analitik berjalan bersamaan", () => {
+  // Dua perjalanan yang saling menunggu adalah dua kali waktu tunggu untuk data
+  // yang tidak saling bergantung.
+  assert.match(analyticsPage, /await Promise\.all\(\[/);
+  assert.match(analyticsPage, /api\.fetchLeadTime\(range\.from, range\.to\),\s*api\.fetchVendorStats\(range\.from, range\.to\),/);
 });
