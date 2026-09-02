@@ -36,6 +36,9 @@ const ICON_PATHS = {
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
   alert: '<path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
   inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13l3.5 7v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/>',
+  // Analitik memakai kurva tren, bukan batang — supaya tidak tertukar dengan
+  // Laporan, yang ikonnya memang batang.
+  chart: '<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>',
 };
 
 export function icon(name, size = 20) {
@@ -129,6 +132,70 @@ export function fact(label, value, { mono = false } = {}) {
     <span>${esc(label)}</span>
     <strong${mono ? ' class="mono"' : ""}>${esc(value)}</strong>
   </div>`;
+}
+
+/* --------------------------------------------------------------------------
+ * Rel dok
+ *
+ * Gudang ini punya sembilan pintu inbound. Itu batas fisiknya: berapa pun
+ * panjang antrean di luar, sembilan adalah jumlah truk yang dapat dibongkar
+ * bersamaan.
+ *
+ * Sebelumnya kenyataan itu hanya hadir sebagai satu dropdown filter, padahal
+ * ia justru model mental yang dipakai supervisor sepanjang hari — "dok mana
+ * yang kosong, dan mana yang sebentar lagi lewat tenggat". Menjawabnya dulu
+ * berarti membaca setiap kartu antrean satu per satu.
+ *
+ * Setiap ubin membawa `data-dock-bar` beserta jam mulai dan tenggatnya, jadi
+ * ticker satu detik yang sudah ada dapat menyusutkan barnya tanpa siapa pun
+ * merender ulang rel ini.
+ * ----------------------------------------------------------------------- */
+
+/**
+ * @param {{name: string, label: string, ticket: object|null, phase: string}[]} docks
+ */
+export function dockRail(docks) {
+  return `<div class="dock-rail" role="list" aria-label="Status dok inbound">
+    ${docks.map(dockTile).join("")}
+  </div>`;
+}
+
+const DOCK_TONE = { breached: "dock-late", warning: "dock-warn" };
+
+function dockTile({ label, ticket, phase }) {
+  if (!ticket) {
+    return `<article class="dock dock-free" role="listitem" aria-label="Dok ${esc(label)} kosong">
+      <div class="dock-head">
+        <span class="dock-no">${esc(label)}</span>
+        <span class="dock-state">Kosong</span>
+      </div>
+      <div class="dock-occupant"><span class="dock-vendor">Siap menerima</span></div>
+      <span class="dock-bar"><i></i></span>
+    </article>`;
+  }
+
+  const tone = DOCK_TONE[phase] || "dock-busy";
+  const state = phase === "breached" ? "Lewat SLA" : phase === "warning" ? "Hampir" : "Bongkar";
+  const bar = [
+    `data-dock-bar="1"`,
+    ticket.sla_started_at ? `data-sla-started="${esc(ticket.sla_started_at)}"` : "",
+    ticket.sla_deadline_at ? `data-sla-deadline="${esc(ticket.sla_deadline_at)}"` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return `<article class="dock ${tone}" role="listitem"
+    aria-label="Dok ${esc(label)}, ${esc(state)}, antrean ${esc(ticket.queue_no || "-")}">
+    <div class="dock-head">
+      <span class="dock-no">${esc(label)}</span>
+      <span class="dock-state">${esc(state)}</span>
+    </div>
+    <div class="dock-occupant">
+      <span class="dock-queue">${esc(ticket.queue_no || "-")}</span>
+      <span class="dock-vendor">${esc(ticket.vendor_name || "Vendor tidak tercatat")}</span>
+    </div>
+    <span class="dock-bar" ${bar}><i></i></span>
+  </article>`;
 }
 
 /* --------------------------------------------------------------------------

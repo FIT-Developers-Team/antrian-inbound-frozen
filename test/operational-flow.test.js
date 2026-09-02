@@ -9,7 +9,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { read, schema, apiServer, importModule } = require("./helpers");
 
-const board = read("js/pages/board.js");
+// Papan terdiri dari dua berkas sejak kartu antrean dipisahkan: board.js
+// mengurus halaman dan aksinya, queue-card.js mengurus tampilan satu tiket.
+// Kontrak alur operasional berlaku atas keduanya sebagai satu kesatuan.
+const board = read("js/pages/board.js") + read("js/pages/queue-card.js");
 const register = read("js/pages/register.js");
 const api = read("js/api.js");
 const edge = apiServer();

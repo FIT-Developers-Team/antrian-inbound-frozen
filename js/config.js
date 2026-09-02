@@ -261,11 +261,12 @@ export function statusMeta(status) {
 
 /** Peran dan halaman yang boleh dibukanya. */
 export const ROLE_PAGES = {
+  // Security bekerja di pos masuk; analitik lead time bukan alat mereka.
   SECURITY: ["board", "register", "settings"],
   CHECKER: ["board", "report", "settings"],
-  SPV: ["board", "register", "report", "settings"],
-  ADMIN: ["board", "register", "report", "settings"],
-  DEVELOPER: ["board", "register", "report", "settings"],
+  SPV: ["board", "register", "report", "analytics", "settings"],
+  ADMIN: ["board", "register", "report", "analytics", "settings"],
+  DEVELOPER: ["board", "register", "report", "analytics", "settings"],
 };
 
 export function pagesForRole(role) {

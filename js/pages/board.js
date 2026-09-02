@@ -9,26 +9,57 @@
 
 import * as api from "../api.js";
 import * as store from "../store.js";
-import { currentSite, fleetLabel, gateLabel, statusMeta } from "../config.js";
-import { esc, formatTime, toLocalInputValue } from "../format.js";
-import { slaMarkup, slaState } from "../sla.js";
-import { elapsedMarkup } from "../sla.js";
+import { currentSite, gateLabel, statusMeta } from "../config.js";
+import { esc, toLocalInputValue } from "../format.js";
+import { slaState } from "../sla.js";
 import {
-  badge,
-  chip,
   debounce,
   dialog,
+  dockRail,
   emptyState,
-  fact,
   icon,
   metricStrip,
   pageHeader,
   toast,
   withBusy,
 } from "../ui.js";
+import { queueCard } from "./queue-card.js";
 
 /** Filter hanya di memori — tidak ada permintaan tambahan ke server. */
 const filters = { query: "", status: "AKTIF", gate: "" };
+
+/* --------------------------------------------------------------------------
+ * Rel dok
+ *
+ * Sembilan pintu inbound adalah batas fisik gudang ini: berapa pun panjang
+ * antrean di luar, sembilan adalah jumlah truk yang dapat dibongkar bersamaan.
+ * Memetakan gate ke penghuninya menjawab pertanyaan yang paling sering
+ * ditanyakan supervisor tanpa membaca satu kartu pun.
+ * ----------------------------------------------------------------------- */
+function buildDocks(rows) {
+  const now = new Date();
+  const occupant = new Map();
+  rows.forEach((row) => {
+    if (String(row.status || "").toUpperCase() !== "UNLOADING" || !row.gate) return;
+    // Bila dua tiket menunjuk gate yang sama — seharusnya mustahil sejak server
+    // menolaknya, tetapi data lama bisa saja memuatnya — yang paling mendesak
+    // yang ditampilkan.
+    const current = occupant.get(row.gate);
+    if (!current || slaState(row, now).seconds < slaState(current, now).seconds) {
+      occupant.set(row.gate, row);
+    }
+  });
+
+  return store.state.gates.map((gate) => {
+    const ticket = occupant.get(gate) || null;
+    return {
+      name: gate,
+      label: gateLabel(gate).replace(/^\S+\s/, ""),
+      ticket,
+      phase: ticket ? slaState(ticket, now).phase : "free",
+    };
+  });
+}
 
 /* --------------------------------------------------------------------------
  * Ringkasan
@@ -51,12 +82,6 @@ function summarize(rows) {
       value: String(count("CALLED")),
       sub: "Menuju gate",
       tone: "accent",
-    },
-    {
-      label: "Bongkar",
-      value: String(unloading.length),
-      sub: "SLA sedang berjalan",
-      tone: "teal",
     },
     {
       label: "Mendekati SLA",
@@ -108,97 +133,6 @@ function sortByUrgency(rows) {
     const weight = (s) => (s.phase === "breached" ? -1e9 - s.seconds : s.seconds || 1e9);
     return weight(left) - weight(right);
   });
-}
-
-/* --------------------------------------------------------------------------
- * Kartu antrean
- * ----------------------------------------------------------------------- */
-function queueCard(row) {
-  const status = String(row.status || "").toUpperCase();
-  const meta = statusMeta(status);
-  const tone = {
-    WAITING: "var(--status-monitor)",
-    CALLED: "var(--accent)",
-    UNLOADING: "var(--teal)",
-    COMPLETED: "var(--status-normal)",
-    EXPIRED: "var(--status-critical)",
-  }[status] || "var(--line-strong)";
-
-  const poList = String(row.po_numbers || "")
-    .split(/[,;]\s*/)
-    .filter(Boolean);
-
-  return `<article class="queue-card" style="--queue-tone:${tone}" data-ticket="${esc(row.ticket_id)}">
-    <div class="queue-card-head">
-      <div class="queue-no">
-        <strong>${esc(row.queue_no || "-")}</strong>
-        <small>${esc(row.vendor_name || "Vendor tidak tercatat")}</small>
-      </div>
-      ${badge(meta.label, meta.tone)}
-    </div>
-
-    ${slaMarkup(row, { hero: true })}
-
-    <div class="queue-facts">
-      ${fact("Armada", fleetLabel(row.fleet_type))}
-      ${fact("Plat", row.plat_number || "-", { mono: true })}
-      ${fact("Gate", gateLabel(row.gate), { mono: true })}
-      ${fact("Datang", formatTime(row.arrived_at), { mono: true })}
-      <div class="fact">
-        <span>Tunggu</span>
-        <strong>${elapsedMarkup(row.arrived_at, row.start_unloading_at)}</strong>
-      </div>
-      ${fact("SKU / Qty", `${row.total_sku ?? 0} / ${row.total_qty ?? 0}`, { mono: true })}
-    </div>
-
-    ${poList.length ? `<div class="queue-po-list">${poList.map((po) => chip(po, { accent: true })).join("")}</div>` : ""}
-
-    <div class="queue-actions">${cardActions(row, status)}</div>
-  </article>`;
-}
-
-/**
- * Aksi kartu mengikuti tahap tiket. "Mulai Bongkar" baru menjadi tombol utama
- * setelah driver dipanggil — sebelum itu memulai bongkar berarti melewati
- * pemanggilan, dan waktu tunggu driver jadi tidak pernah terukur.
- */
-function cardActions(row, status) {
-  const id = esc(row.ticket_id);
-  const arrival = row.arrived_at
-    ? ""
-    : `<button type="button" class="btn btn-sm" data-action="arrival" data-ticket="${id}">
-         ${icon("clock", 16)} Catat datang
-       </button>`;
-
-  if (status === "WAITING") {
-    return `${arrival}
-      <button type="button" class="btn btn-primary" data-action="call" data-ticket="${id}">
-        ${icon("megaphone", 16)} Panggil
-      </button>
-      <button type="button" class="btn" data-action="start" data-ticket="${id}">
-        ${icon("play", 16)} Mulai bongkar
-      </button>`;
-  }
-
-  if (status === "CALLED") {
-    return `<button type="button" class="btn btn-sm" data-action="call" data-ticket="${id}">
-        ${icon("megaphone", 16)} Panggil ulang
-      </button>
-      <button type="button" class="btn btn-primary" data-action="start" data-ticket="${id}">
-        ${icon("play", 16)} Mulai bongkar
-      </button>`;
-  }
-
-  if (status === "UNLOADING") {
-    return `<button type="button" class="btn btn-sm" data-action="arrival" data-ticket="${id}">
-        ${icon("clock", 16)} Koreksi jam
-      </button>
-      <button type="button" class="btn btn-teal" data-action="finish" data-ticket="${id}">
-        ${icon("check", 16)} Selesai bongkar
-      </button>`;
-  }
-
-  return `<span class="chip">${esc(row.expired_reason || "Tidak ada aksi")}</span>`;
 }
 
 /**
@@ -262,6 +196,8 @@ export function render(root) {
 
     ${errorBanner()}
 
+    <div id="dock-rail">${dockRail(buildDocks(rows))}</div>
+
     ${summarize(rows)}
 
     <div class="filter-bar">
@@ -290,11 +226,35 @@ export function render(root) {
 }
 
 function listMarkup(visible) {
-  if (visible.length) return `<div class="board-grid">${visible.map(queueCard).join("")}</div>`;
-  return emptyState(
-    store.state.loading ? "Memuat antrean…" : "Belum ada antrean",
-    store.state.loading ? "" : "Tiket baru muncul di sini begitu Security mendaftarkan kedatangan.",
+  if (!visible.length) {
+    return emptyState(
+      store.state.loading ? "Memuat antrean…" : "Belum ada antrean",
+      store.state.loading ? "" : "Tiket baru muncul di sini begitu Security mendaftarkan kedatangan.",
+    );
+  }
+
+  // Pengelompokan hanya berlaku pada tampilan "Semua aktif". Saat operator
+  // memilih satu status, kelompoknya tinggal satu dan judulnya jadi kebisingan.
+  if (filters.status !== "AKTIF") {
+    return `<div class="board-grid">${visible.map(queueCard).join("")}</div>`;
+  }
+
+  const sections = GROUPS.map(([status, label]) => {
+    const rows = visible.filter((row) => String(row.status || "").toUpperCase() === status);
+    if (!rows.length) return "";
+    return `<p class="queue-group">${esc(label)} <b>${rows.length}</b></p>
+      <div class="board-grid">${rows.map(queueCard).join("")}</div>`;
+  }).join("");
+
+  const others = visible.filter(
+    (row) => !GROUPS.some(([status]) => status === String(row.status || "").toUpperCase()),
   );
+  const rest = others.length
+    ? `<p class="queue-group">Lainnya <b>${others.length}</b></p>
+       <div class="board-grid">${others.map(queueCard).join("")}</div>`
+    : "";
+
+  return sections + rest;
 }
 
 /**
@@ -314,6 +274,20 @@ function renderList(root) {
   if (count) count.textContent = `${visible.length} tiket`;
   bindTicketActions(root);
 }
+
+/**
+ * Daftar dikelompokkan menurut tahap, bukan digelar sebagai satu grid panjang.
+ *
+ * Ketiganya milik orang yang berbeda: yang sedang bongkar dipantau Checker,
+ * yang sudah dipanggil ditunggu di gate, dan yang menunggu adalah antrean yang
+ * belum disentuh siapa pun. Satu grid tanpa jeda memaksa ketiganya dibaca
+ * sebagai satu daftar, padahal tidak seorang pun bekerja seperti itu.
+ */
+const GROUPS = [
+  ["UNLOADING", "Sedang bongkar"],
+  ["CALLED", "Sudah dipanggil"],
+  ["WAITING", "Menunggu"],
+];
 
 function bindEvents(root) {
   const filterList = debounce(() => renderList(root));
@@ -363,6 +337,8 @@ async function handleAction(button) {
       return promptGate(row, "call");
     case "start":
       return promptGate(row, "start");
+    case "cancel":
+      return promptCancel(row);
     case "finish":
       return withBusy(button, async () => {
         try {
@@ -407,6 +383,53 @@ function promptArrival(row) {
       try {
         await store.mutate(() => api.setArrival(row.ticket_id, new Date(value).toISOString()));
         toast(`Kedatangan ${row.queue_no} tercatat.`);
+        return true;
+      } catch (error) {
+        toast(error.message, "error");
+        return false;
+      }
+    },
+  });
+}
+
+/**
+ * Membatalkan tiket, dengan alasan yang wajib dipilih.
+ *
+ * Aksinya sudah ada di backend sejak awal — lengkap dengan aturan peran, jejak
+ * event, dan antrean ekspor — tetapi tidak satu pun halaman pernah
+ * memanggilnya. Akibatnya driver yang tidak pernah muncul tetap menggantung di
+ * antrean selamanya: ia tidak dapat dipanggil, tidak dapat dibongkar, dan tidak
+ * dapat dikeluarkan. Satu-satunya jalan keluar adalah menyentuh database.
+ *
+ * Alasannya dipilih dari daftar, bukan diketik bebas: alasan yang seragam dapat
+ * dihitung nanti ("berapa banyak driver tidak muncul bulan ini"), sedangkan
+ * teks bebas hanya dapat dibaca satu per satu.
+ */
+const CANCEL_REASONS = [
+  "Driver tidak muncul saat dipanggil",
+  "Truk pulang tanpa bongkar",
+  "PO dibatalkan vendor",
+  "Salah daftar / duplikat",
+  "Kendaraan bermasalah",
+];
+
+function promptCancel(row) {
+  dialog({
+    title: `Batalkan ${row.queue_no}`,
+    confirmLabel: "Batalkan tiket",
+    confirmTone: "danger",
+    body: `<label>
+        <span>Alasan</span>
+        <select class="input" id="cancel-reason">
+          ${CANCEL_REASONS.map((reason) => `<option value="${esc(reason)}">${esc(reason)}</option>`).join("")}
+        </select>
+        <small>Tiket keluar dari antrean dan tidak dapat dikembalikan. Alasannya tercatat pada riwayat.</small>
+      </label>`,
+    onConfirm: async (dialogRoot) => {
+      const reason = dialogRoot.querySelector("#cancel-reason")?.value;
+      try {
+        await store.mutate(() => api.cancelTicket(row.ticket_id, reason));
+        toast(`${row.queue_no} dibatalkan.`);
         return true;
       } catch (error) {
         toast(error.message, "error");

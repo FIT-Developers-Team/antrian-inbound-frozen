@@ -16,6 +16,7 @@ import { applyTheme, cycleTheme, themeIconName } from "./theme.js";
 import * as boardPage from "./pages/board.js";
 import * as registerPage from "./pages/register.js";
 import * as reportPage from "./pages/report.js";
+import * as analyticsPage from "./pages/analytics.js";
 import * as settingsPage from "./pages/settings.js";
 
 const PAGES = {
@@ -36,6 +37,12 @@ const PAGES = {
     icon: "report",
     subtitle: "Riwayat & ekspor",
     render: reportPage.render,
+  },
+  analytics: {
+    label: "Analitik",
+    icon: "chart",
+    subtitle: "Lead time & SLA",
+    render: analyticsPage.render,
   },
   settings: {
     label: "Pengaturan",
@@ -297,48 +304,89 @@ function renderPage() {
 /* --------------------------------------------------------------------------
  * Indikator sinkronisasi
  * ----------------------------------------------------------------------- */
-const SYNC_LABEL = {
-  idle: ["", "Menyiapkan…"],
-  online: ["", "Tersambung"],
-  pending: ["paused", "Mencoba ulang"],
-  offline: ["offline", "Terputus"],
+/**
+ * Pil status menggabungkan TIGA rantai yang berbeda, dan ketiganya pernah
+ * tertukar satu sama lain:
+ *
+ *   1. Postgres -> browser   Saluran langsung (SSE), puluhan milidetik.
+ *   2. Superset -> Postgres  Penjadwal master PO PGS 160, tiap 5 menit.
+ *   3. Jam tablet vs server  Selisih jam yang menentukan benar-tidaknya jam
+ *                            kedatangan yang diketik operator.
+ *
+ * Rantai kedua yang dulu tidak terlihat sama sekali: bila penjadwal mati atau
+ * cookie Superset kedaluwarsa, papan tetap tampak "Tersambung" karena tiket
+ * masih mengalir, sementara master PO membeku — dan pendaftaran mulai menolak
+ * PO yang jelas-jelas ada. Sumber yang basi karena itu mengalahkan status
+ * koneksi.
+ *
+ * Yang ditampilkan sebagai waktu adalah PERUBAHAN TERAKHIR, bukan pemeriksaan
+ * terakhir. Versi sebelumnya menampilkan jam pemeriksaan, yang berubah tiap
+ * lima belas detik — sehingga papan yang membeku sejak pagi tetap terlihat
+ * seolah baru saja diperbarui.
+ */
+const LIVE_LABEL = {
+  live: ["live", "Langsung"],
+  reconnecting: ["paused", "Menyambung ulang"],
+  polling: ["", "Berkala"],
 };
 
-/**
- * Pil status menggabungkan DUA rantai yang berbeda:
- *
- *   1. Postgres → browser   (polling papan, tiap 15 detik)
- *   2. Superset → Postgres  (penjadwal master PO PGS 160, tiap 5 menit)
- *
- * Rantai kedua yang dulu tidak terlihat sama sekali. Bila penjadwal mati atau
- * cookie Superset kedaluwarsa, papan tetap tampak "Tersambung" karena tiket masih
- * mengalir, sementara master PO membeku — dan pendaftaran mulai menolak PO yang
- * jelas-jelas ada. Sumber yang basi karena itu mengalahkan status koneksi.
- */
+function syncPillState() {
+  const { connection, live, source, lastChange, clockSkewSeconds } = store.state;
+
+  if (connection === "offline") return { tone: "offline", label: "Terputus", title: "Papan tidak dapat menghubungi server." };
+  if (connection === "idle") return { tone: "", label: "Menyiapkan…", title: "" };
+
+  // Jam tablet yang meleset jauh membuat setiap jam kedatangan hari itu salah.
+  // Itu cacat data, bukan sekadar tampilan, jadi ia mengalahkan yang lain.
+  if (Math.abs(clockSkewSeconds) > 120) {
+    const minutes = Math.round(Math.abs(clockSkewSeconds) / 60);
+    return {
+      tone: "offline",
+      label: `Jam tablet meleset ${minutes} menit`,
+      title:
+        `Jam perangkat ini ${clockSkewSeconds > 0 ? "mendahului" : "tertinggal"} jam server ` +
+        `sekitar ${minutes} menit. Jam kedatangan yang diketik di sini akan ikut salah. ` +
+        `Perbaiki jam perangkat, lalu muat ulang.`,
+    };
+  }
+
+  if (store.sourceIsStale(source)) {
+    return {
+      tone: "paused",
+      label: `Sumber ${source.location_id || "PGS"} basi · ${formatDuration(source.age_seconds)}`,
+      title:
+        `Master PO terakhir tersinkron ${formatDuration(source.age_seconds)} lalu. ` +
+        `Sinkronisasi Superset seharusnya berjalan tiap 5 menit.`,
+    };
+  }
+
+  const [tone, label] = LIVE_LABEL[live] || LIVE_LABEL.polling;
+  const since = lastChange ? ` · ${formatTime(lastChange)}` : "";
+  const sourceNote = source?.last_synced_at
+    ? ` Master PO ${source.site_code || ""}: ${source.total_po ?? 0} PO, sync ${formatDuration(source.age_seconds)} lalu.`
+    : "";
+
+  return {
+    tone,
+    label: `${label}${since}`,
+    title:
+      (live === "live"
+        ? "Perubahan diterima langsung dari server, tanpa menunggu siklus."
+        : live === "reconnecting"
+          ? "Saluran langsung terputus; papan sementara ditarik berkala."
+          : "Saluran langsung tidak tersedia; papan ditarik berkala tiap 15 detik.") +
+      (lastChange ? ` Perubahan terakhir ${formatTime(lastChange)}.` : "") +
+      sourceNote,
+  };
+}
+
 function updateSyncPill() {
   const pill = document.getElementById("sync-pill");
   if (!pill) return;
-
-  const [tone, label] = SYNC_LABEL[store.state.connection] || SYNC_LABEL.idle;
-  const synced = store.state.lastSync ? ` · ${formatTime(store.state.lastSync)}` : "";
-  const source = store.state.source;
-
-  if (store.state.connection === "online" && store.sourceIsStale(source)) {
-    pill.querySelector("i").className = "paused";
-    pill.querySelector("span").textContent =
-      `Sumber ${source.location_id || "PGS"} basi · ${formatDuration(source.age_seconds)}`;
-    pill.title =
-      `Master PO terakhir tersinkron ${formatDuration(source.age_seconds)} lalu. ` +
-      `Sinkronisasi Superset seharusnya berjalan tiap 5 menit.`;
-    return;
-  }
-
+  const { tone, label, title } = syncPillState();
   pill.querySelector("i").className = tone;
-  pill.querySelector("span").textContent = `${label}${synced}`;
-  pill.title = source?.last_synced_at
-    ? `Master PO ${source.site_code || ""} ${source.location_id || ""}: ${source.total_po ?? 0} PO, ` +
-      `sync ${formatDuration(source.age_seconds)} lalu.`
-    : "";
+  pill.querySelector("span").textContent = label;
+  pill.title = title;
 }
 
 /* --------------------------------------------------------------------------

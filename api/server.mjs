@@ -25,6 +25,7 @@ import { createStaticHandler } from "./static.mjs";
 import { MIN_COMPRESS_BYTES, compress, negotiateEncoding } from "./compress.mjs";
 import { clientKey, createRateLimiter } from "./ratelimit.mjs";
 import { SECURITY_HEADERS, transportHeaders } from "./headers.mjs";
+import { createLiveChannel } from "./live.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.PORT) || 8080;
@@ -233,7 +234,7 @@ function authStatus() {
 /* --------------------------------------------------------------------------
  * Otorisasi
  * ----------------------------------------------------------------------- */
-const READ_ACTIONS = ["board", "history", "sites", "source_freshness"];
+const READ_ACTIONS = ["board", "history", "sites", "source_freshness", "lead_time", "events"];
 const ALL_ROLES = KNOWN_ROLES;
 
 const WRITE_ACTIONS = {
@@ -354,6 +355,11 @@ function fingerprinted(request, response, payload, extra = {}) {
 }
 
 /* --------------------------------------------------------------------------
+ * Saluran perubahan langsung
+ * ----------------------------------------------------------------------- */
+const live = createLiveChannel(pool);
+
+/* --------------------------------------------------------------------------
  * Pembatas laju
  *
  * Dua lapis, karena keduanya menjawab serangan yang berbeda. Batas per alamat
@@ -436,7 +442,12 @@ async function handle(request, response) {
           hint: "Periksa DATABASE_URL dan apakah layanan Postgres hidup.",
         });
       }
-      return send(response, 200, { ok: problems.length === 0, problems, ...(details || {}) });
+      return send(response, 200, {
+        ok: problems.length === 0,
+        problems,
+        live: { listening: live.listening, clients: live.clientCount },
+        ...(details || {}),
+      });
     }
     return send(response, 200, { ok: true, data: { ...authStatus(), problems: currentProblems() } });
   }
@@ -527,6 +538,24 @@ async function handle(request, response) {
     return fingerprinted(request, response, payload, {
       "x-inbound-rows": String(payload?.rows?.length ?? 0),
       "x-inbound-site": site || "ALL",
+    });
+  }
+
+  if (request.method === "GET" && action === "events") {
+    // Aliran ini tidak melewati send()/sendJson(): ia tidak pernah berakhir,
+    // dan tidak boleh dikompresi maupun di-buffer.
+    live.subscribe(request, response, site, securityHeadersFor(response));
+    return true;
+  }
+
+  if (request.method === "GET" && action === "lead_time") {
+    return sendJson(request, response, 200, {
+      ok: true,
+      data: await rpc("inbound_lead_time_stats", [
+        site,
+        url.searchParams.get("from") || null,
+        url.searchParams.get("to") || null,
+      ]),
     });
   }
 
@@ -785,6 +814,9 @@ function startHistoryPruning() {
 /** Menutup koneksi dengan rapi supaya deploy ulang tidak memutus permintaan. */
 function shutdown(signal) {
   console.log(`[api] ${signal}, menutup…`);
+  // Pendengar dan setiap aliran SSE ditutup lebih dulu; koneksi yang menggantung
+  // menahan server.close() sampai batas waktu paksa di bawah.
+  live.close();
   server.close(() => pool.end().then(() => process.exit(0)));
   setTimeout(() => process.exit(1), 10_000).unref();
 }

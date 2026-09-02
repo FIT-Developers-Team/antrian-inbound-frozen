@@ -278,6 +278,100 @@ export function logout() {
   }
 }
 
+/* --------------------------------------------------------------------------
+ * Saluran perubahan langsung
+ * ----------------------------------------------------------------------- */
+
+/**
+ * Berlangganan pemberitahuan perubahan dari server.
+ *
+ * Memakai `fetch` dengan aliran yang dibaca sendiri, BUKAN `EventSource`.
+ * Alasannya satu dan menentukan: `EventSource` tidak dapat mengirim header,
+ * jadi memakainya berarti menaruh token sesi di query string — tempat ia
+ * mendarat di log akses, di header Referer, dan di riwayat browser. Membaca
+ * aliran sendiri hanya beberapa baris lebih panjang dan menjaga token tetap di
+ * header Authorization seperti setiap permintaan lain.
+ *
+ * Yang dikirim server hanyalah "ada yang berubah". Snapshotnya tetap ditarik
+ * lewat jalur ber-ETag yang sama, sehingga saluran ini tidak pernah menjadi
+ * sumber kebenaran kedua yang bisa menyimpang dari yang pertama.
+ *
+ * @param {(state: "live"|"reconnecting"|"unsupported") => void} onState
+ * @returns {() => void} Penghenti langganan.
+ */
+export function subscribeToChanges({ onSignal, onState }) {
+  let stopped = false;
+  let controller = null;
+  let attempt = 0;
+
+  async function run() {
+    while (!stopped) {
+      try {
+        controller = new AbortController();
+        const response = await fetch(buildUrl("events"), {
+          headers: authHeaders({ accept: "text/event-stream" }),
+          cache: "no-store",
+          signal: controller.signal,
+        });
+
+        if (response.status === 401) {
+          // Sesi mati ditangani jalur biasa; saluran ini diam saja.
+          handleUnauthorized();
+          return;
+        }
+        if (!response.ok || !response.body) throw new ApiError("Saluran tidak tersedia.", response.status);
+
+        attempt = 0;
+        onState?.("live");
+        await readFrames(response.body, onSignal);
+      } catch (error) {
+        if (stopped || error?.name === "AbortError") return;
+        onState?.("reconnecting");
+      }
+
+      if (stopped) return;
+      // Mundur bertahap sampai tiga puluh detik. Jaringan gudang putus-nyambung,
+      // dan menyambung ulang tanpa jeda hanya menambah beban saat server justru
+      // sedang bermasalah.
+      attempt += 1;
+      const waitMs = Math.min(1000 * 2 ** Math.min(attempt, 5), 30_000);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+
+  run();
+
+  return () => {
+    stopped = true;
+    controller?.abort();
+  };
+}
+
+/** Pemisah antar-bingkai SSE: satu baris kosong, yaitu dua baris baru. */
+const SSE_DELIMITER = String.fromCharCode(10, 10);
+
+/** Membaca bingkai SSE dari aliran dan memanggil `onSignal` untuk tiap perubahan. */
+async function readFrames(body, onSignal) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+
+    let boundary;
+    while ((boundary = buffer.indexOf(SSE_DELIMITER)) >= 0) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      // Baris yang diawali titik dua adalah denyut nadi penjaga koneksi.
+      if (frame.startsWith(":")) continue;
+      if (frame.includes("event: changed")) onSignal?.();
+    }
+  }
+}
+
 /** Papan antrean: satu baris per tiket, sudah membawa tenggat SLA dari server. */
 export function fetchBoard(daysBack = 2) {
   return apiGet("board", { days_back: daysBack }, { useEtag: true });
@@ -291,6 +385,18 @@ export function fetchPoMaster() {
 /** Riwayat lengkap untuk halaman Laporan dan ekspor CSV. */
 export function fetchHistory(from, to) {
   return apiGet("history", { from, to });
+}
+
+/**
+ * Statistik lead time untuk halaman Analitik.
+ *
+ * Seluruh agregasi terjadi di Postgres; yang menyeberang jaringan hanya
+ * ringkasannya. Rentang tiga puluh hari berarti ribuan tiket, dan menariknya
+ * hanya untuk dirata-rata di tablet adalah pekerjaan yang pernah membuat
+ * halaman Laporan membeku.
+ */
+export function fetchLeadTime(from, to) {
+  return apiGet("lead_time", { from, to });
 }
 
 export function createTicket(ticket) {

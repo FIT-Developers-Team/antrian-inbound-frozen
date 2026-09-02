@@ -1041,3 +1041,209 @@ begin
 
   return jsonb_build_object('sync_runs_deleted', v_runs, 'ticket_events_deleted', v_events);
 end; $$;
+
+-- ---------------------------------------------------------------------------
+-- 18. Pemberitahuan perubahan — dasar pembaruan realtime
+--
+-- Papan antrean dulu hanya tahu ada perubahan dengan bertanya tiap lima belas
+-- detik. Itu berarti tiket yang baru didaftarkan Security bisa tidak terlihat
+-- Checker selama seperempat menit — dan di pos masuk, lima belas detik adalah
+-- selisih antara "driver sudah dipanggil" dan "driver masih menunggu di luar
+-- sambil bertanya-tanya".
+--
+-- Postgres sudah punya jawabannya sejak lama: LISTEN/NOTIFY. Setiap perubahan
+-- tiket mengirim satu pesan, proses API mendengarkannya lewat SATU koneksi
+-- khusus, lalu meneruskannya ke setiap browser yang terhubung. Tidak ada
+-- polling di antaranya, dan biayanya tidak bertambah seiring jumlah tablet.
+--
+-- Muatannya sengaja hanya kode gudang, bukan isi tiketnya. Batas muatan NOTIFY
+-- adalah 8000 byte, dan yang perlu diketahui browser hanyalah "ada yang berubah
+-- di gudang ini, tariklah snapshot baru" — snapshotnya sendiri sudah ber-ETag,
+-- jadi penarikan yang ternyata tidak membawa perubahan tetap murah.
+-- ---------------------------------------------------------------------------
+create or replace function inbound_notify_change() returns trigger
+language plpgsql as $fn$
+declare v_site text;
+begin
+  v_site := coalesce(case when tg_op = 'DELETE' then old.site_code else new.site_code end, 'ALL');
+  -- pg_notify di dalam trigger baru terkirim ketika transaksinya commit, jadi
+  -- tidak ada browser yang pernah menarik data yang kemudian di-rollback.
+  perform pg_notify('inbound_changed', v_site);
+  return null;
+end; $fn$;
+
+drop trigger if exists tickets_notify on tickets;
+create trigger tickets_notify
+  after insert or update or delete on tickets
+  for each row execute function inbound_notify_change();
+
+/**
+ * ticket_pos memakai trigger STATEMENT, bukan ROW.
+ *
+ * Menyelesaikan bongkar memperbarui seluruh baris PO milik satu tiket
+ * sekaligus; trigger per baris akan mengirim sepuluh pemberitahuan identik
+ * untuk satu tindakan operator. Satu per pernyataan sudah cukup, dan browser
+ * tetap menarik snapshot yang sama.
+ */
+create or replace function inbound_notify_change_stmt() returns trigger
+language plpgsql as $fn$
+begin
+  perform pg_notify('inbound_changed', 'ALL');
+  return null;
+end; $fn$;
+
+drop trigger if exists ticket_pos_notify on ticket_pos;
+create trigger ticket_pos_notify
+  after insert or update or delete on ticket_pos
+  for each statement execute function inbound_notify_change_stmt();
+
+-- ---------------------------------------------------------------------------
+-- 19. Lead time
+--
+-- Tiga durasi menyusun umur satu tiket, dan ketiganya menjawab pertanyaan yang
+-- berbeda:
+--
+--   tunggu   datang -> mulai bongkar   Berapa lama driver menunggu di luar.
+--                                      Milik perencanaan gate dan shift.
+--   bongkar  mulai  -> selesai         Berapa lama pekerjaannya sendiri.
+--                                      Inilah yang diukur SLA.
+--   dwell    datang -> selesai         Berapa lama truk berada di gudang.
+--                                      Inilah yang dirasakan vendor.
+--
+-- Yang dilaporkan PERSENTIL, bukan hanya rata-rata. Rata-rata menyembunyikan
+-- ekor: sepuluh truk yang lancar meredam satu truk yang tertahan empat jam,
+-- padahal truk itulah yang membuat vendor menelepon. p90 menjawab "hari yang
+-- buruk seburuk apa" — dan itu pertanyaan yang benar-benar ditanyakan.
+--
+-- Seluruh perhitungan terjadi di sini, bukan di browser. Rentang tiga puluh
+-- hari berarti ribuan tiket, dan mengirim semuanya hanya untuk dirata-rata di
+-- tablet adalah persis pekerjaan yang pernah membuat halaman Laporan membeku.
+-- ---------------------------------------------------------------------------
+
+/** Ringkasan satu kumpulan durasi menit: jumlah, median, p90, dan terburuk. */
+create or replace function inbound_duration_summary(p_minutes double precision[])
+returns jsonb language sql immutable as $fn$
+  select case when p_minutes is null or cardinality(p_minutes) = 0
+    then jsonb_build_object('count', 0)
+    else (
+      select jsonb_build_object(
+        'count', count(*),
+        'avg', round(avg(v))::int,
+        'p50', round(percentile_cont(0.5) within group (order by v))::int,
+        'p90', round(percentile_cont(0.9) within group (order by v))::int,
+        'max', round(max(v))::int)
+      from unnest(p_minutes) as v
+    )
+  end;
+$fn$;
+
+create or replace function inbound_lead_time_stats(
+  p_site_code text default null,
+  p_from date default null,
+  p_to date default null
+)
+returns jsonb language sql stable as $fn$
+  with bounds as (
+    select coalesce(p_from, (timezone('Asia/Jakarta', now()) - interval '13 days')::date) as from_date,
+           coalesce(p_to, (timezone('Asia/Jakarta', now()))::date) as to_date
+  ),
+  scoped as (
+    select
+      b.operational_date, b.status, b.sla_target_hours,
+      inbound_fleet_canonical(b.fleet_type) as fleet,
+      extract(hour from timezone('Asia/Jakarta', b.arrived_at))::int as arrival_hour,
+      case when b.arrived_at is not null and b.sla_started_at is not null
+           then extract(epoch from (b.sla_started_at - b.arrived_at)) / 60 end as wait_minutes,
+      case when b.sla_started_at is not null and b.sla_stopped_at is not null
+           then extract(epoch from (b.sla_stopped_at - b.sla_started_at)) / 60 end as unload_minutes,
+      case when b.arrived_at is not null and b.sla_stopped_at is not null
+           then extract(epoch from (b.sla_stopped_at - b.arrived_at)) / 60 end as dwell_minutes,
+      case when b.sla_target_hours > 0 and b.sla_deadline_at is not null and b.sla_stopped_at is not null
+           then b.sla_stopped_at <= b.sla_deadline_at end as met_sla
+    from inbound_board b, bounds x
+    where b.site_code = any(inbound_scoped_sites(p_site_code))
+      and b.operational_date between x.from_date and x.to_date
+  ),
+  overall as (
+    select jsonb_build_object(
+      'tickets', count(*),
+      'completed', count(*) filter (where status = 'COMPLETED'),
+      'cancelled', count(*) filter (where status = 'EXPIRED'),
+      'active', count(*) filter (where status in ('WAITING', 'CALLED', 'UNLOADING')),
+      'wait', inbound_duration_summary(array_agg(wait_minutes) filter (where wait_minutes is not null)),
+      'unload', inbound_duration_summary(array_agg(unload_minutes) filter (where unload_minutes is not null)),
+      'dwell', inbound_duration_summary(array_agg(dwell_minutes) filter (where dwell_minutes is not null)),
+      'sla_judged', count(*) filter (where met_sla is not null),
+      'sla_met', count(*) filter (where met_sla)
+    ) as payload from scoped
+  ),
+  by_day as (
+    select coalesce(jsonb_agg(row order by sort_day), '[]'::jsonb) as payload from (
+      select operational_date as sort_day, jsonb_build_object(
+        'day', operational_date::text,
+        'tickets', count(*),
+        'wait_p50', round(percentile_cont(0.5) within group (order by wait_minutes))::int,
+        'wait_p90', round(percentile_cont(0.9) within group (order by wait_minutes))::int,
+        'unload_p50', round(percentile_cont(0.5) within group (order by unload_minutes))::int,
+        'unload_p90', round(percentile_cont(0.9) within group (order by unload_minutes))::int,
+        'dwell_p50', round(percentile_cont(0.5) within group (order by dwell_minutes))::int,
+        'sla_judged', count(*) filter (where met_sla is not null),
+        'sla_met', count(*) filter (where met_sla)
+      ) as row
+      from scoped group by operational_date
+    ) d
+  ),
+  by_fleet as (
+    select coalesce(jsonb_agg(row order by sort_tickets desc), '[]'::jsonb) as payload from (
+      select count(*) as sort_tickets, jsonb_build_object(
+        'fleet', fleet,
+        'tickets', count(*),
+        'wait_p50', round(percentile_cont(0.5) within group (order by wait_minutes))::int,
+        'unload_p50', round(percentile_cont(0.5) within group (order by unload_minutes))::int,
+        'unload_p90', round(percentile_cont(0.9) within group (order by unload_minutes))::int,
+        'target_hours', max(sla_target_hours),
+        'sla_judged', count(*) filter (where met_sla is not null),
+        'sla_met', count(*) filter (where met_sla)
+      ) as row
+      from scoped where fleet is not null and fleet <> '' group by fleet
+    ) f
+  ),
+  by_hour as (
+    -- Seluruh 24 jam selalu dikembalikan, termasuk yang kosong: grafik jam
+    -- kedatangan yang melompati jam sepi menyesatkan mata yang membacanya.
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'hour', h.hour, 'arrivals', coalesce(c.tickets, 0), 'wait_p50', c.wait_p50
+           ) order by h.hour), '[]'::jsonb) as payload
+      from generate_series(0, 23) as h(hour)
+      left join (
+        select arrival_hour,
+               count(*)::int as tickets,
+               round(percentile_cont(0.5) within group (order by wait_minutes))::int as wait_p50
+          from scoped where arrival_hour is not null group by arrival_hour
+      ) c on c.arrival_hour = h.hour
+  ),
+  -- Distribusi lama bongkar dalam pita 30 menit, untuk histogram. Pita terakhir
+  -- menampung semua yang lebih lama, supaya satu truk yang tertahan sepanjang
+  -- hari tidak meregangkan sumbu sampai sisanya tidak terbaca.
+  buckets as (
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'from_minutes', b.bucket * 30,
+             'to_minutes', case when b.bucket = 11 then null else (b.bucket + 1) * 30 end,
+             'tickets', coalesce(c.tickets, 0)
+           ) order by b.bucket), '[]'::jsonb) as payload
+      from generate_series(0, 11) as b(bucket)
+      left join (
+        select least(floor(unload_minutes / 30), 11)::int as bucket, count(*)::int as tickets
+          from scoped where unload_minutes is not null group by 1
+      ) c on c.bucket = b.bucket
+  )
+  select jsonb_build_object(
+    'from', (select from_date::text from bounds),
+    'to', (select to_date::text from bounds),
+    'overall', overall.payload,
+    'by_day', by_day.payload,
+    'by_fleet', by_fleet.payload,
+    'by_hour', by_hour.payload,
+    'unload_buckets', buckets.payload
+  ) from overall, by_day, by_fleet, by_hour, buckets;
+$fn$;

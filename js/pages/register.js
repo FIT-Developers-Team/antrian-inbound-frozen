@@ -42,17 +42,32 @@ function resetForm() {
 /* --------------------------------------------------------------------------
  * Bagian formulir
  * ----------------------------------------------------------------------- */
+/**
+ * Pemilih armada.
+ *
+ * Menyandang `role="radiogroup"` sejak awal, tetapi tidak pernah berperilaku
+ * seperti radiogroup: setiap tombol dapat ditab satu per satu, dan tombol panah
+ * tidak melakukan apa-apa. Bagi pemakai pembaca layar itu lebih buruk daripada
+ * tidak memberi peran sama sekali — mereka diberi tahu ada dua belas pilihan
+ * yang dapat dijelajahi dengan panah, lalu panahnya diam.
+ *
+ * `tabindex` berpindah mengikuti pilihan (roving tabindex): satu Tab masuk ke
+ * grup, panah berpindah di dalamnya, satu Tab lagi keluar. Itulah pola yang
+ * dijanjikan perannya.
+ */
 function fleetPicker() {
-  return `<div class="fleet-grid" role="radiogroup" aria-label="Tipe armada">
-    ${FLEET_TYPES.map(
-      (fleet) => `<button type="button" role="radio"
-        aria-checked="${form.fleet === fleet.value}"
-        class="fleet-option${form.fleet === fleet.value ? " active" : ""}"
+  return `<div class="fleet-grid" role="radiogroup" aria-label="Tipe armada" id="fleet-grid">
+    ${FLEET_TYPES.map((fleet) => {
+      const active = form.fleet === fleet.value;
+      return `<button type="button" role="radio"
+        aria-checked="${active}"
+        tabindex="${active ? "0" : "-1"}"
+        class="fleet-option${active ? " active" : ""}"
         data-fleet="${esc(fleet.value)}">
         <strong>${esc(fleet.label)}</strong>
         <small>SLA ${esc(fleet.slaHours)} jam</small>
-      </button>`,
-    ).join("")}
+      </button>`;
+    }).join("")}
   </div>`;
 }
 
@@ -309,10 +324,30 @@ export function render(root) {
 function bindEvents(root) {
   const rerender = () => render(root);
 
-  root.querySelectorAll("[data-fleet]").forEach((button) => {
+  const fleetButtons = [...root.querySelectorAll("[data-fleet]")];
+  fleetButtons.forEach((button, index) => {
     button.addEventListener("click", () => {
       form.fleet = button.dataset.fleet;
       rerender();
+    });
+
+    button.addEventListener("keydown", (event) => {
+      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+      if (step === undefined && event.key !== "Home" && event.key !== "End") return;
+      event.preventDefault();
+
+      const next =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? fleetButtons.length - 1
+            : // Melingkar: dari pilihan terakhir, panah kanan kembali ke awal.
+              (index + step + fleetButtons.length) % fleetButtons.length;
+
+      form.fleet = fleetButtons[next].dataset.fleet;
+      rerender();
+      // Fokus mengikuti pilihan, sesuai perilaku radiogroup yang sebenarnya.
+      root.querySelector(`[data-fleet="${CSS.escape(form.fleet)}"]`)?.focus();
     });
   });
 

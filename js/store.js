@@ -33,8 +33,36 @@ export const state = {
   source: null,
   loading: true,
   error: "",
+  /** Kapan terakhir kali kita BERTANYA ke server. */
   lastSync: null,
+  /**
+   * Kapan terakhir kali jawabannya benar-benar BERBEDA.
+   *
+   * Dua hal yang berbeda dan selama ini tertukar. Pil status dulu menampilkan
+   * jam `lastSync` dan berubah tiap lima belas detik, sehingga papan yang
+   * membeku sejak pagi tetap terlihat seolah baru saja diperbarui. Yang ingin
+   * diketahui operator bukan "kapan kamu bertanya", melainkan "kapan terakhir
+   * ada yang bergerak".
+   */
+  lastChange: null,
   connection: "idle", // idle | online | pending | offline
+  /**
+   * Keadaan saluran langsung: live | reconnecting | polling.
+   *
+   * `polling` berarti saluran tidak pernah terbuka sama sekali — browser lama,
+   * atau proxy yang memutus aliran panjang. Papan tetap benar, hanya lebih
+   * lambat, dan operator berhak tahu yang mana yang sedang berlaku.
+   */
+  live: "polling",
+  /**
+   * Selisih jam tablet terhadap jam server, dalam detik.
+   *
+   * Jam tablet gudang kerap meleset beberapa menit, dan jam kedatangan diketik
+   * memakai jam tablet. Selisih yang besar berarti setiap tiket hari itu
+   * membawa jam yang salah — cacat data yang mustahil ditebak dari layar
+   * kecuali ada yang mengukurnya.
+   */
+  clockSkewSeconds: 0,
   /**
    * Sidik jari snapshot terakhir, dikirim server bersama payload.
    *
@@ -112,6 +140,14 @@ export async function refresh({ silent = false } = {}) {
     applyServerCatalog({ sites: payload?.sites, gates: payload?.gates });
     state.error = "";
     state.lastSync = new Date();
+    if (dataChanged) state.lastChange = new Date();
+
+    // Jam server ikut di setiap snapshot; selisihnya diukur di sini sekali,
+    // bukan ditebak dari stempel waktu baris.
+    const serverTime = payload?.server_time ? Date.parse(payload.server_time) : NaN;
+    if (Number.isFinite(serverTime)) {
+      state.clockSkewSeconds = Math.round((Date.now() - serverTime) / 1000);
+    }
     setConnection("online");
   } catch (error) {
     setConnection(silent ? "pending" : "offline");
@@ -173,23 +209,62 @@ export function ensurePoMaster() {
 }
 
 /* --------------------------------------------------------------------------
- * Polling
+ * Pembaruan langsung, dengan polling sebagai jaring pengaman
+ *
+ * Saluran SSE membawa perubahan dalam hitungan puluhan milidetik. Polling tidak
+ * dihapus karena saluran mana pun bisa putus tanpa memberi tahu: proxy memutus
+ * koneksi panjang, tablet berpindah access point, dan saluran yang diam tidak
+ * boleh berarti papan yang diam-diam basi.
+ *
+ * Iramanya karena itu mengikuti keadaan saluran — sering ketika saluran mati,
+ * jarang ketika saluran hidup.
  * ----------------------------------------------------------------------- */
 let poller = null;
+let unsubscribeLive = null;
 
-export function startPolling() {
-  stopPolling();
+/** Selagi saluran hidup, polling hanya perlu sesekali membuktikan diri. */
+const LIVE_POLL_INTERVAL_MS = 60_000;
+
+function pollInterval() {
+  return state.live === "live" ? LIVE_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
+}
+
+function schedulePoll() {
+  clearInterval(poller);
   poller = setInterval(() => {
     // Tab yang tersembunyi tidak perlu menarik data: tidak ada yang melihatnya
     // dan browser sudah membatasi timer di latar belakang.
     if (!document.hidden) refresh({ silent: true });
-  }, POLL_INTERVAL_MS);
+  }, pollInterval());
+}
+
+export function startPolling() {
+  stopPolling();
+  schedulePoll();
+
+  unsubscribeLive = api.subscribeToChanges({
+    onSignal: () => {
+      // Sinyal hanya berkata "ada yang berubah". Snapshotnya tetap ditarik lewat
+      // jalur ber-ETag yang sama, sehingga tidak pernah ada sumber kebenaran
+      // kedua yang dapat menyimpang dari yang pertama.
+      refresh({ silent: true });
+    },
+    onState: (mode) => {
+      if (state.live === mode) return;
+      state.live = mode;
+      // Irama polling menyesuaikan diri begitu keadaan saluran berubah.
+      schedulePoll();
+      emit({ dataChanged: false });
+    },
+  });
 }
 
 export function stopPolling() {
-  if (!poller) return;
-  clearInterval(poller);
+  if (poller) clearInterval(poller);
   poller = null;
+  unsubscribeLive?.();
+  unsubscribeLive = null;
+  state.live = "polling";
 }
 
 export function bindVisibilityRefresh() {

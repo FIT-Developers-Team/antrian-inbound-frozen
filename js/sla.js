@@ -152,6 +152,7 @@ function tick() {
   document.querySelectorAll("[data-elapsed-from]").forEach((element) => {
     refreshElapsedElement(element, now);
   });
+  document.querySelectorAll("[data-dock-bar]").forEach((element) => refreshDockBar(element, now));
   extraTicks.forEach((fn) => {
     try {
       fn(now);
@@ -185,6 +186,33 @@ function elapsedText(from, to, now = new Date()) {
 export function refreshElapsedElement(element, now = new Date()) {
   const text = elapsedText(element.dataset.elapsedFrom, element.dataset.elapsedTo, now);
   if (element.textContent !== text) element.textContent = text;
+}
+
+/**
+ * Bar SLA di rel dok.
+ *
+ * Ia MENYUSUT, bukan bertambah: yang ditanyakan supervisor adalah "berapa sisa
+ * waktunya", bukan "berapa yang sudah terpakai". Bar penuh berarti bongkar baru
+ * dimulai; bar habis berarti tenggat tiba.
+ *
+ * Lebarnya ditulis sebagai custom property, bukan gaya `width` langsung, supaya
+ * transisinya tetap dipegang CSS dan ticker hanya menyetor satu angka.
+ */
+export function refreshDockBar(element, now = new Date()) {
+  const started = parseDate(element.dataset.slaStarted);
+  const deadline = parseDate(element.dataset.slaDeadline);
+  if (!started || !deadline) {
+    element.style.setProperty("--dock-progress", "0%");
+    return 0;
+  }
+  const total = deadline.getTime() - started.getTime();
+  const remaining = deadline.getTime() - now.getTime();
+  const ratio = total > 0 ? Math.max(0, Math.min(1, remaining / total)) : 0;
+  const percent = `${(ratio * 100).toFixed(1)}%`;
+  if (element.style.getPropertyValue("--dock-progress") !== percent) {
+    element.style.setProperty("--dock-progress", percent);
+  }
+  return ratio;
 }
 
 /** Mendaftarkan pekerjaan lain yang perlu berdetak per detik (mis. jam dinding). */
