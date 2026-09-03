@@ -376,7 +376,13 @@ test("sinkronisasi Superset punya batas waktu dan tidak pernah tumpang-tindih", 
   // `fetch` tanpa batas waktu menunggu selamanya: Superset yang menggantung —
   // bukan yang mati — membekukan sync tanpa satu pun baris di log.
   assert.match(sync, /AbortSignal\.timeout\(FETCH_TIMEOUT_MS\)/);
-  assert.equal((sync.match(/signal: timeoutSignal\(\)/g) || []).length, 3, "setiap fetch harus berbatas waktu");
+  // Dibandingkan dengan JUMLAH PEMANGGILAN FETCH-nya, bukan dengan angka tetap:
+  // angka tetap harus disunting setiap kali satu permintaan ditambahkan, dan
+  // suntingan itu selalu tampak seperti sekadar menyesuaikan hitungan — persis
+  // cara sebuah fetch tanpa batas waktu lolos tanpa ada yang menyadarinya.
+  const fetchCalls = (sync.match(/await fetch\(/g) || []).length;
+  const bounded = (sync.match(/signal: timeoutSignal\(\)/g) || []).length;
+  assert.equal(bounded, fetchCalls, `setiap fetch harus berbatas waktu (${bounded} dari ${fetchCalls})`);
   assert.match(sync, /if \(running\)/);
   assert.match(sync, /running = false/);
 });

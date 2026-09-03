@@ -59,6 +59,10 @@ services:
       # berjalan penuh — pendaftaran cukup memakai opsi PO manual.
       SUPERSET_BASE_URL: ${SUPERSET_BASE_URL:-https://dash.astronauts.id}
       SUPERSET_SESSION_COOKIE: ${SUPERSET_SESSION_COOKIE:-}
+      # Id DATASET, bukan location_id — keduanya kebetulan 160 dan tidak
+      # berhubungan. location_id selalu dibaca dari tabel site_master.
+      SUPERSET_DATASET_ID: ${SUPERSET_DATASET_ID:-160}
+      # Hanya jalur cadangan bila dataset tidak dapat dikueri langsung.
       SUPERSET_CHART_ID: ${SUPERSET_CHART_ID:-20662}
     # `expose`, bukan `ports`: proxy Coolify menjangkau layanan lewat jaringan
     # internal, dan menerbitkan port ke host justru berebut dengannya.

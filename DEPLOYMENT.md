@@ -99,8 +99,18 @@ Opsional, untuk menyalakan sync master PO dari Superset:
 ```
 SUPERSET_SESSION_COOKIE=<cookie session Superset>
 SUPERSET_BASE_URL=https://dash.astronauts.id
+SUPERSET_DATASET_ID=160
 SUPERSET_CHART_ID=20662
 ```
+
+> **Dua angka 160 yang berbeda.** `SUPERSET_DATASET_ID=160` adalah id **dataset**
+> di Superset. Kode gudang Pegangsaan di dalam datanya juga kebetulan
+> `location_id = 160`. Keduanya tidak berhubungan; menukarnya menghasilkan sync
+> yang "berhasil" dengan nol baris, tanpa pesan galat. `location_id` tidak pernah
+> dikonfigurasi di sini — ia selalu dibaca dari tabel `site_master`.
+
+Sync menarik **dataset secara langsung**; `SUPERSET_CHART_ID` hanya dipakai
+sebagai cadangan bila dataset tidak dapat dikueri.
 
 Tanpa cookie, aplikasi tetap berjalan penuh; pendaftaran hanya perlu memakai
 opsi **PO manual**.

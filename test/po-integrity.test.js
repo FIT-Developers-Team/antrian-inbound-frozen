@@ -222,3 +222,86 @@ test("chart yang sudah teragregasi per PO tetap dibaca apa adanya", async () => 
   assert.equal(po[12], 1250, "request_quantity apa adanya");
   assert.equal(po[14], 18, "count_sku apa adanya");
 });
+
+/* -- Jalur dataset ----------------------------------------------------------*/
+
+test("dataset dikueri langsung, bukan lewat chart", async () => {
+  const sync = read("api/sync-superset.mjs");
+
+  // `query_context` milik chart membawa filternya sendiri, dan filter itu tidak
+  // selalu hidup di `queries[].filters` — banyak yang tersimpan sebagai
+  // `adhoc_filters` di form_data. Membuang filter lokasi dari `queries[]` lalu
+  // menambahkan milik kita karena itu tidak menghapus apa pun: filter lama tetap
+  // ikut, di-AND dengan yang baru, dan gudang yang diminta menghasilkan nol baris.
+  assert.match(sync, /const DATASET_ID = process\.env\.SUPERSET_DATASET_ID/);
+  assert.match(sync, /mode: "dataset"/);
+
+  // Jalur dataset harus DICOBA LEBIH DULU; chart hanya cadangan.
+  assert.ok(
+    sync.indexOf("fetchDatasetRows(locationIds, cookie)") < sync.indexOf("Cadangan 1"),
+    "dataset harus menjadi jalur utama",
+  );
+
+  // Peringatan tabrakan angka 160 harus tetap ada: id dataset dan location_id
+  // PGS kebetulan sama, dan menukarnya menghasilkan sync yang sunyi dan salah.
+  assert.match(sync, /DUA ANGKA 160 YANG BERBEDA/);
+});
+
+test("kolom dataset ditemukan dari metadatanya, bukan ditulis tangan", async () => {
+  const { datasetColumnsFromMeta } = await importModule("api/sync-superset.mjs");
+
+  const { names, types } = datasetColumnsFromMeta({
+    result: {
+      columns: [
+        { column_name: "po_number", type: "VARCHAR" },
+        { column_name: "location_id", type: "BIGINT" },
+        { column_name: "sku_number", type: "VARCHAR" },
+        { column_name: null, type: "VARCHAR" },
+      ],
+    },
+  });
+  assert.deepEqual(names, ["po_number", "location_id", "sku_number"]);
+  assert.equal(types.get("location_id"), "BIGINT");
+
+  // Metadata yang tidak berbentuk tidak boleh melempar; ia harus terbaca sebagai
+  // "tidak ada kolom" supaya penelepon dapat mundur ke jalur chart.
+  assert.deepEqual(datasetColumnsFromMeta({}).names, []);
+  assert.deepEqual(datasetColumnsFromMeta({ result: { columns: [] } }).names, []);
+});
+
+test("nilai filter lokasi diketik mengikuti tipe kolomnya", async () => {
+  const { locationFilterValues } = await importModule("api/sync-superset.mjs");
+
+  // `IN ('160')` pada kolom bigint gagal dengan "invalid input syntax for
+  // integer", dan mengirim keduanya sekaligus hanya memindahkan galat itu.
+  assert.deepEqual(locationFilterValues(["160", "796"], "BIGINT"), [160, 796]);
+  assert.deepEqual(locationFilterValues(["160"], "VARCHAR"), ["160"]);
+  assert.deepEqual(locationFilterValues(["160"], undefined), ["160"], "tanpa tipe, tetap teks");
+});
+
+test("permintaan dataset meminta baris mentah, bukan agregat", async () => {
+  const { datasetQueryContext } = await importModule("api/sync-superset.mjs");
+
+  const context = datasetQueryContext({
+    datasetId: "160",
+    columns: ["po_number", "sku_number", "request_quantity"],
+    filterValues: [160],
+    limit: 10_000,
+    offset: 20_000,
+  });
+
+  // id dataset dan location_id kebetulan sama-sama 160; keduanya harus mendarat
+  // di tempat yang berbeda dan tidak pernah tertukar.
+  assert.deepEqual(context.datasource, { id: 160, type: "table" });
+  assert.deepEqual(context.queries[0].filters, [{ col: "location_id", op: "IN", val: [160] }]);
+
+  // `metrics: []` bersama `columns` terisi adalah cara Superset diminta
+  // mengembalikan baris mentah. Tanpa itu ia mengelompokkan hasilnya, dan satu
+  // baris per PO x SKU berubah menjadi satu baris per PO.
+  assert.deepEqual(context.queries[0].metrics, []);
+  assert.deepEqual(context.queries[0].columns, ["po_number", "sku_number", "request_quantity"]);
+  assert.equal(context.queries[0].row_limit, 10_000);
+  assert.equal(context.queries[0].row_offset, 20_000);
+  assert.equal(context.result_type, "results");
+  assert.equal(context.force, true);
+});

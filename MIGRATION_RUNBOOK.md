@@ -56,11 +56,22 @@ sebagai `<gate_prefix>-NN`, contoh `SRG-GATE-INB-01-04`. Nilai awal SRG/BIT/CSI 
 `sync-superset` bekerja dua tahap agar benar-benar menarik gudang yang aktif,
 bukan sekadar menyaring apa pun yang dikirim chart:
 
-1. **Jalur utama.** Membaca `query_context` dari chart `SUPERSET_CHART_ID`
-   (default `20662`), membuang filter pada kolom `SUPERSET_LOCATION_COLUMN`
-   (default `location_id`), menggantinya dengan daftar `location_id` gudang
-   aktif, lalu mengeksekusinya lewat `POST /api/v1/chart/data`. Dengan begitu
-   permintaan ke Superset sudah spesifik ke PGS (160).
+1. **Jalur utama — DATASET, tanpa chart.** Membaca daftar kolom dari
+   `GET /api/v1/dataset/$SUPERSET_DATASET_ID` (default `160`), lalu menarik
+   baris mentahnya lewat `POST /api/v1/chart/data` dengan
+   `datasource: {id, type: "table"}`, `metrics: []`, dan satu filter
+   `SUPERSET_LOCATION_COLUMN IN (<location_id gudang aktif>)`. Hasilnya diambil
+   per halaman `SUPERSET_PAGE_SIZE` (default 10.000) sampai habis.
+
+   Chart dilewati karena `query_context` miliknya membawa filter sendiri — kerap
+   sebagai `adhoc_filters` di `form_data`, yang tidak terhapus ketika
+   `queries[].filters` dibersihkan — sehingga filter lama tetap ikut di-AND dan
+   gudang yang diminta dapat menghasilkan nol baris. Chart juga membatasi
+   kolomnya pada pilihan pembuatnya, sedangkan yang dibutuhkan adalah seluruh
+   kolom dataset.
+
+   **Perhatikan:** id dataset (`160`) dan `location_id` PGS (`160`) kebetulan
+   sama dan tidak berhubungan.
 2. **Cadangan.** Bila chart tidak menyimpan `query_context` atau eksekusinya
    gagal, sync jatuh ke `GET /api/v1/chart/{id}/data/?force=true` seperti
    sebelumnya.
@@ -95,8 +106,10 @@ location_id di luar daftar tersebut.
 - `INBOUND_AUTH_SECRET`
 - `SYNC_SECRET`
 - `SUPERSET_BASE_URL`
-- `SUPERSET_CHART_ID` (opsional, default `20662`)
+- `SUPERSET_DATASET_ID` (opsional, default `160`) — id dataset, BUKAN location_id
+- `SUPERSET_CHART_ID` (opsional, default `20662`) — hanya jalur cadangan
 - `SUPERSET_LOCATION_COLUMN` (opsional, default `location_id`)
+- `SUPERSET_PAGE_SIZE` (opsional, default `10000`)
 - `SUPERSET_SESSION_COOKIE`
 - `GSHEET_SYNC_URL`
 - `GSHEET_SYNC_SECRET`

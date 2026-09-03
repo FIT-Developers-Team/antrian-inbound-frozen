@@ -29,6 +29,45 @@ const CHART_ID = process.env.SUPERSET_CHART_ID || "20662";
 const LOCATION_COLUMN = process.env.SUPERSET_LOCATION_COLUMN || "location_id";
 const BASE_URL = (process.env.SUPERSET_BASE_URL || "https://dash.astronauts.id").replace(/\/$/, "");
 
+/* ---------------------------------------------------------------------------
+ * DATASET, BUKAN CHART.
+ *
+ * ================== PERINGATAN: DUA ANGKA 160 YANG BERBEDA ==================
+ *
+ *   SUPERSET_DATASET_ID = 160   id DATASET (tabel) di Superset
+ *   location_id         = 160   kode gudang PEGANGSAAN di dalam data
+ *
+ * Keduanya kebetulan 160 dan TIDAK ada hubungannya satu sama lain. Menukar
+ * keduanya menghasilkan sync yang "berhasil" dengan nol baris, atau menarik
+ * dataset yang sama sekali lain — keduanya tanpa pesan galat. Kode di bawah
+ * karena itu tidak pernah memakai satu konstanta untuk dua peran: id dataset
+ * hanya muncul di `datasource.id`, dan location_id hanya datang dari
+ * `site_master.location_id`.
+ * ===========================================================================
+ *
+ * Chart (slice) dilewati sepenuhnya sebagai jalur utama, dan itu memperbaiki
+ * satu kegagalan yang nyata: `query_context` milik chart membawa filternya
+ * sendiri, dan filter itu tidak selalu hidup di `queries[].filters` — banyak
+ * yang tersimpan sebagai `adhoc_filters` di dalam `form_data`. Membuang filter
+ * lokasi dari `queries[].filters` lalu menambahkan milik kita karena itu tidak
+ * menghapus apa pun: filter lama tetap ikut, di-AND dengan yang baru, dan PGS
+ * menghasilkan nol baris pada chart yang kebetulan dipatok ke gudang lain.
+ *
+ * Chart juga MEMBATASI kolomnya pada apa yang dipilih pembuat chart, sementara
+ * yang dibutuhkan di sini adalah seluruh kolom dataset.
+ *
+ * Bertanya langsung ke dataset menghilangkan keduanya: kolomnya ditemukan dari
+ * metadata dataset itu sendiri, dan satu-satunya filter yang berlaku adalah
+ * yang ditulis di sini.
+ * ------------------------------------------------------------------------- */
+const DATASET_ID = process.env.SUPERSET_DATASET_ID || "160";
+
+/** Baris per halaman saat menarik dataset. Superset membatasi lewat SQL_MAX_ROW. */
+const PAGE_SIZE = Number(process.env.SUPERSET_PAGE_SIZE) || 10_000;
+
+/** Batas halaman; penjaga agar dataset yang tak terduga besar tidak berputar tanpa akhir. */
+const MAX_PAGES = 40;
+
 /**
  * Cookie sesi Superset — dari database dulu, lingkungan sebagai cadangan.
  *
@@ -127,8 +166,158 @@ function assertAuthorized(response) {
   if (response.status === 401 || response.status === 403) throw new SupersetAuthError(response.status);
 }
 
+/* ---------------------------------------------------------------------------
+ * Jalur dataset
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Kolom dataset beserta tipenya, dibaca dari metadata dataset itu sendiri.
+ *
+ * Daftar kolom TIDAK ditulis tangan. Menuliskannya berarti setiap kolom baru di
+ * Superset harus diikuti perubahan kode di sini, dan setiap kolom yang berganti
+ * nama membuat seluruh sync gagal dengan galat SQL yang tidak menyebut sebabnya.
+ * Dibaca dari dataset, "seluruh kolom" selalu berarti seluruh kolom.
+ *
+ * Tipenya ikut dibaca karena filter lokasi membutuhkannya — lihat
+ * `locationFilterValues()`.
+ */
+export function datasetColumnsFromMeta(meta) {
+  const columns = meta?.result?.columns;
+  if (!Array.isArray(columns) || !columns.length) return { names: [], types: new Map() };
+  const names = [];
+  const types = new Map();
+  columns.forEach((column) => {
+    const name = column?.column_name;
+    if (!name) return;
+    names.push(name);
+    types.set(name, String(column?.type || "").toUpperCase());
+  });
+  return { names, types };
+}
+
+/**
+ * Nilai filter lokasi, DIKETIK MENGIKUTI KOLOMNYA.
+ *
+ * `location_id` datang dari `site_master` sebagai teks, sedangkan kolom yang
+ * sama di dataset bisa saja bertipe angka. Postgres menolak membandingkan
+ * keduanya — `IN ('160')` pada kolom bigint gagal dengan "invalid input syntax
+ * for integer" — dan mengirim keduanya sekaligus (`IN ('160', 160)`) hanya
+ * memindahkan galat yang sama ke sisi lain.
+ *
+ * Tipenya karena itu dibaca dari metadata dataset, dan nilainya dicetak
+ * mengikuti tipe itu.
+ */
+export function locationFilterValues(locationIds, columnType) {
+  const numeric = /INT|SERIAL|NUMERIC|DECIMAL|DOUBLE|FLOAT|REAL/.test(String(columnType || "").toUpperCase());
+  return locationIds.map((id) => (numeric ? Number(id) : String(id)));
+}
+
+/**
+ * Badan permintaan untuk satu halaman baris mentah dari sebuah dataset.
+ *
+ * `metrics: []` bersama `columns` yang terisi adalah cara Superset diminta
+ * mengembalikan BARIS MENTAH alih-alih agregat. Tanpa itu ia mengelompokkan
+ * hasilnya, dan satu baris per PO x SKU berubah menjadi satu baris per PO —
+ * persis informasi yang sedang dicari di sini.
+ */
+export function datasetQueryContext({ datasetId, columns, filterValues, limit, offset }) {
+  return {
+    datasource: { id: Number(datasetId), type: "table" },
+    force: true,
+    result_format: "json",
+    result_type: "results",
+    queries: [
+      {
+        columns,
+        metrics: [],
+        orderby: [],
+        filters: [{ col: LOCATION_COLUMN, op: "IN", val: filterValues }],
+        extras: { having: "", where: "" },
+        row_limit: limit,
+        row_offset: offset,
+      },
+    ],
+  };
+}
+
+async function postQuery(context, cookie) {
+  const response = await fetch(`${BASE_URL}/api/v1/chart/data`, {
+    method: "POST",
+    headers: { ...headers(cookie), "content-type": "application/json" },
+    body: JSON.stringify(context),
+    signal: timeoutSignal(),
+  });
+  assertAuthorized(response);
+  if (!response.ok) {
+    // Badan galat Superset menyebut kolom atau tipe yang bermasalah; tanpa itu
+    // yang tercatat hanya "HTTP 400", yang tidak menuntun ke mana pun.
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Superset menjawab HTTP ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`);
+  }
+  return rowsFromPayload(await response.json());
+}
+
+/**
+ * Menarik seluruh baris dataset untuk gudang aktif, satu halaman pada satu waktu.
+ *
+ * Halaman diperlukan karena Superset membatasi tiap kueri lewat `SQL_MAX_ROW`.
+ * Tanpa paging, master yang melewati batas itu terpotong DIAM-DIAM: sync tetap
+ * "berhasil", dan PO yang hilang hanya ketahuan ketika seseorang mendaftarkannya
+ * di pos masuk dan ditolak sebagai tidak ada di master.
+ */
+async function fetchDatasetRows(locationIds, cookie) {
+  const meta = await fetch(`${BASE_URL}/api/v1/dataset/${DATASET_ID}`, {
+    headers: headers(cookie),
+    signal: timeoutSignal(),
+  });
+  assertAuthorized(meta);
+  if (!meta.ok) throw new Error(`Metadata dataset ${DATASET_ID} tidak terbaca (HTTP ${meta.status}).`);
+
+  const { names, types } = datasetColumnsFromMeta(await meta.json());
+  if (!names.length) throw new Error(`Dataset ${DATASET_ID} tidak melaporkan satu kolom pun.`);
+  if (!names.includes(LOCATION_COLUMN)) {
+    throw new Error(
+      `Dataset ${DATASET_ID} tidak punya kolom ${LOCATION_COLUMN}. ` +
+        `Kolom yang ada: ${names.slice(0, 12).join(", ")}${names.length > 12 ? ", …" : ""}.`,
+    );
+  }
+
+  const filterValues = locationFilterValues(locationIds, types.get(LOCATION_COLUMN));
+  const rows = [];
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const batch = await postQuery(
+      datasetQueryContext({
+        datasetId: DATASET_ID,
+        columns: names,
+        filterValues,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+      }),
+      cookie,
+    );
+    rows.push(...batch);
+    // Halaman yang tidak penuh berarti dataset sudah habis.
+    if (batch.length < PAGE_SIZE) return { rows, truncated: false };
+  }
+  return { rows, truncated: true };
+}
+
 async function fetchRows(locationIds, cookie) {
-  // Jalur utama: jalankan query_context milik chart dengan filter gudang aktif.
+  /* Jalur utama: DATASET, tanpa melewati chart sama sekali.
+   *
+   * Chart membawa filter dan pilihan kolomnya sendiri, dan keduanya bekerja
+   * melawan apa yang dibutuhkan di sini — lihat catatan panjang di dekat
+   * DATASET_ID. Jalur chart di bawah dipertahankan HANYA sebagai cadangan,
+   * untuk lingkungan yang datasetnya tidak dapat dikueri langsung. */
+  try {
+    const { rows, truncated } = await fetchDatasetRows(locationIds, cookie);
+    return { rows, mode: "dataset", truncated };
+  } catch (error) {
+    if (error instanceof SupersetAuthError) throw error;
+    console.warn(`[superset] jalur dataset gagal, mundur ke chart ${CHART_ID}:`, error.message);
+  }
+
+  // Cadangan 1: query_context milik chart dengan filter gudang aktif.
   try {
     const chart = await fetch(`${BASE_URL}/api/v1/chart/${CHART_ID}`, {
       headers: headers(cookie),
@@ -155,7 +344,7 @@ async function fetchRows(locationIds, cookie) {
     console.warn("[superset] query_context gagal, memakai saved chart:", error.message);
   }
 
-  // Cadangan: chart tanpa query_context tersimpan.
+  // Cadangan 2: chart tanpa query_context tersimpan.
   const response = await fetch(`${BASE_URL}/api/v1/chart/${CHART_ID}/data/?force=true`, {
     headers: headers(cookie),
     signal: timeoutSignal(),
@@ -464,7 +653,7 @@ export async function runSupersetSync(pool) {
     if (!siteRows.length) throw new Error("Tidak ada gudang aktif di site_master.");
 
     const byLocation = new Map(siteRows.map((row) => [String(row.location_id), row.site_code]));
-    const { rows, mode } = await fetchRows(siteRows.map((row) => String(row.location_id)), cookie);
+    const { rows, mode, truncated } = await fetchRows(siteRows.map((row) => String(row.location_id)), cookie);
 
     // Hanya baris milik gudang aktif yang disimpan, apa pun yang dikirim chart.
     const scoped = rows.filter((row) => byLocation.has(String(row[LOCATION_COLUMN] ?? "")));
@@ -485,6 +674,13 @@ export async function runSupersetSync(pool) {
           ? `${audit.duplicates} baris duplikat per PO, angkanya identik; nilai tersimpan tetap benar.`
           : null,
       unmapped.length ? `Kolom sumber yang belum disimpan: ${unmapped.join(", ")}.` : null,
+      truncated
+        ? `Dataset terpotong pada batas ${MAX_PAGES * PAGE_SIZE} baris; sebagian PO kemungkinan belum tersimpan.`
+        : null,
+      mode !== "dataset"
+        ? `Jalur dataset tidak dapat dipakai; data ditarik lewat chart ${CHART_ID} (${mode}), ` +
+          "yang membawa filter dan pilihan kolomnya sendiri."
+        : null,
       mismatched.length
         ? `Cacah SKU chart berbeda dari jumlah barisnya pada ${mismatched.length} PO ` +
           `(${mismatched.join("; ")}). Satu baris tampaknya BUKAN satu SKU, jadi total ` +
