@@ -49,11 +49,51 @@ function isDark() {
 
 /* --------------------------------------------------------------------------
  * Kerangka
+ *
+ * GEOMETRINYA MENGIKUTI LEBAR LAYAR, dan itu bukan kemewahan.
+ *
+ * SVG di dalam `viewBox` diskalakan seluruhnya — termasuk hurufnya. Dengan
+ * viewBox tetap 720 unit dan `.chart { width: 100% }`, grafik yang sama dirender
+ * selebar ~1000px di desktop dan ~320px di ponsel. Faktor skalanya 0,45, jadi
+ * label sumbu setinggi 10 unit tiba di layar ponsel sebagai huruf setinggi
+ * EMPAT SETENGAH PIKSEL: "08-21" dan "150m" berubah menjadi noda abu-abu yang
+ * tidak dapat dibaca siapa pun, apalagi di tablet gudang yang dilihat sambil
+ * berdiri.
+ *
+ * Memperbesar `font-size` saja tidak menyelesaikannya — huruf 24 unit menabrak
+ * bidang plot dan meluber melewati padding kiri. Yang harus mengecil adalah
+ * KANVASNYA: viewBox yang lebih sempit berarti faktor skala mendekati satu, dan
+ * huruf 10 unit kembali tiba sebagai huruf 10 piksel.
+ *
+ * Nilainya dibaca pada saat render. Halaman Analitik digambar ulang setiap kali
+ * dibuka dan setiap kali rentangnya berubah, jadi tidak ada pendengar resize
+ * yang perlu dipelihara; grafik yang tertinggal setelah perangkat diputar akan
+ * benar kembali pada muat berikutnya.
  * ----------------------------------------------------------------------- */
-const W = 720;
-const H = 260;
-const PAD = { top: 16, right: 16, bottom: 34, left: 46 };
-const PLOT = { w: W - PAD.left - PAD.right, h: H - PAD.top - PAD.bottom };
+const COMPACT = globalThis.matchMedia?.("(max-width: 720px)");
+
+function compact() {
+  return Boolean(COMPACT?.matches);
+}
+
+let W = 720;
+let H = 260;
+let PAD = { top: 16, right: 16, bottom: 34, left: 46 };
+let PLOT = { w: W - PAD.left - PAD.right, h: H - PAD.top - PAD.bottom };
+
+/** Menyetel ulang kanvas untuk lebar layar yang sedang berlaku. */
+function useGeometry() {
+  if (compact()) {
+    W = 340;
+    H = 210;
+    PAD = { top: 12, right: 8, bottom: 26, left: 34 };
+  } else {
+    W = 720;
+    H = 260;
+    PAD = { top: 16, right: 16, bottom: 34, left: 46 };
+  }
+  PLOT = { w: W - PAD.left - PAD.right, h: H - PAD.top - PAD.bottom };
+}
 
 /** Skala nilai ke koordinat y, dengan nol selalu ikut sebagai dasar. */
 function yScale(max) {
@@ -102,13 +142,28 @@ function gridAndAxis(max, formatValue, ticks) {
     </g>`;
 }
 
-/** Label sumbu-x yang dijarangkan supaya tidak pernah bertabrakan. */
+/**
+ * Label sumbu-x yang dijarangkan supaya tidak pernah bertabrakan.
+ *
+ * Label terakhir selalu tampil — pembaca perlu tahu di mana rentangnya
+ * berakhir — tetapi ia MENGGANTIKAN tetangga yang terlalu dekat alih-alih
+ * ditumpuk di atasnya. Bentuk sebelumnya menggambar keduanya tanpa syarat, dan
+ * pada rentang empat belas hari itu menghasilkan "09-02" dan "09-03" yang
+ * saling menimpa menjadi satu gumpalan di ujung kanan setiap grafik.
+ */
 function xLabels(items, xOf, label) {
-  const every = Math.max(1, Math.ceil(items.length / 8));
+  // Kanvas ponsel hanya selebar 340 unit; delapan label di atasnya bertumpuk.
+  const every = Math.max(1, Math.ceil(items.length / (compact() ? 4 : 8)));
+  const last = items.length - 1;
+  const shown = new Set();
+  for (let index = 0; index <= last; index += every) shown.add(index);
+  for (const index of [...shown]) if (last - index < every) shown.delete(index);
+  if (last >= 0) shown.add(last);
+
   return `<g class="chart-axis" aria-hidden="true">
     ${items
       .map((item, index) =>
-        index % every === 0 || index === items.length - 1
+        shown.has(index)
           ? `<text x="${xOf(index)}" y="${H - PAD.bottom + 16}" text-anchor="middle">${esc(label(item, index))}</text>`
           : "",
       )
@@ -144,6 +199,7 @@ export function chartEmpty(message) {
  * ----------------------------------------------------------------------- */
 export function stackedDailyChart(days, { title, description }) {
   if (!days.length) return chartEmpty("Belum ada tiket selesai pada rentang ini.");
+  useGeometry();
 
   const totals = days.map((day) => (day.wait_p50 || 0) + (day.unload_p50 || 0));
   const { max, ticks } = axisTicks(Math.max(...totals, 1));
@@ -198,6 +254,7 @@ export function stackedDailyChart(days, { title, description }) {
  * angka yang tidak dapat dinilai baik atau buruk.
  * ----------------------------------------------------------------------- */
 export function complianceChart(days, { title, description, target = 90 }) {
+  useGeometry();
   const points = days
     .map((day, index) => ({
       index,
@@ -251,6 +308,7 @@ export function columnChart(items, { title, description, series = "volume", valu
   if (!items.length || items.every((item) => !valueOf(item))) {
     return chartEmpty("Belum ada data pada rentang ini.");
   }
+  useGeometry();
 
   const { max, ticks } = axisTicks(Math.max(...items.map(valueOf), 1));
   const y = yScale(max);
@@ -291,12 +349,17 @@ export function columnChart(items, { title, description, series = "volume", valu
  * ----------------------------------------------------------------------- */
 export function fleetChart(fleets, { title, description }) {
   if (!fleets.length) return chartEmpty("Belum ada tiket selesai pada rentang ini.");
+  useGeometry();
 
   const rows = fleets.slice(0, 8);
-  const rowHeight = 30;
+  const rowHeight = compact() ? 34 : 30;
   const height = rows.length * rowHeight + 24;
-  const labelWidth = 108;
-  const plotWidth = W - labelWidth - 76;
+  // Kolom nama dan kolom angka menyusut bersama kanvasnya; dipatok tetap,
+  // keduanya memakan hampir seluruh lebar grafik ponsel dan menyisakan batang
+  // sepanjang beberapa piksel saja.
+  const labelWidth = compact() ? 86 : 108;
+  const valueWidth = compact() ? 62 : 76;
+  const plotWidth = W - labelWidth - valueWidth;
   const { max } = axisTicks(Math.max(...rows.map((row) => row.unload_p90 || row.unload_p50 || 0), 1));
 
   const bars = rows
@@ -330,7 +393,7 @@ export function fleetChart(fleets, { title, description }) {
                  stroke="var(--text-muted)" stroke-width="1.5" stroke-dasharray="3 3" />`
             : ""
         }
-        <text class="chart-axis" x="${W - 66}" y="${y + 16}">${p50}m / ${p90}m</text>
+        <text class="chart-axis" x="${W - valueWidth + 10}" y="${y + 16}">${p50}m / ${p90}m</text>
       </g>`;
     })
     .join("");

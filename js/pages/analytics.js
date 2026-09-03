@@ -30,7 +30,7 @@
 import * as api from "../api.js";
 import { currentSite } from "../config.js";
 import { esc, formatMinutes, toDateInputValue } from "../format.js";
-import { badge, emptyState, icon, pageHeader, section, toast, withBusy } from "../ui.js";
+import { badge, emptyState, icon, onBreakpoint, pageHeader, section, toast, withBusy } from "../ui.js";
 import {
   bindChartTooltips,
   chartEmpty,
@@ -50,6 +50,29 @@ let stats = null;
 let vendors = null;
 let loading = false;
 let loadedKey = "";
+
+/* --------------------------------------------------------------------------
+ * Menggambar ulang ketika layar melewati ambang grafik
+ *
+ * Kanvas grafik dipilih pada saat render menurut lebar layar (`useGeometry()`
+ * di charts.js). Tablet yang diputar dari lanskap ke potret melewati ambang
+ * 720px, dan tanpa ini grafiknya tetap memakai kanvas lebar: label setinggi 10
+ * unit pada kanvas 720 unit tiba di layar 390px sebagai huruf enam piksel, dan
+ * bertahan begitu sampai halaman kebetulan digambar ulang.
+ *
+ * Satu pendengar di tingkat modul cukup — halaman ini hanya punya satu akar
+ * pada satu waktu. Penjaganya menyebut elemen milik halaman ini sendiri:
+ * `#page-root` dipakai bersama seluruh halaman, jadi "masih terpasang" saja
+ * tidak cukup untuk memastikan Analitik-lah yang sedang ditampilkan.
+ * ----------------------------------------------------------------------- */
+let mounted = null;
+
+onBreakpoint("(max-width: 720px)", () => {
+  // Penjaganya menyebut elemen milik halaman ini sendiri: `#page-root` dipakai
+  // bersama seluruh halaman, jadi "masih terpasang" saja tidak membuktikan
+  // bahwa Analitik-lah yang sedang ditampilkan.
+  if (mounted?.isConnected && mounted.querySelector("#an-apply")) render(mounted);
+});
 
 function rangeKey() {
   return `${currentSite()?.code || "ALL"}|${range.from}|${range.to}`;
@@ -165,7 +188,7 @@ function vendorTable(rows) {
           const tone =
             compliance === null ? "muted" : compliance >= 90 ? "normal" : compliance >= 75 ? "warning" : "critical";
           return `<tr>
-            <td><strong>${esc(row.vendor)}</strong></td>
+            <td class="cell-text" title="${esc(row.vendor)}"><strong>${esc(row.vendor)}</strong></td>
             <td class="numeric mono">${esc(row.tickets)}</td>
             <td>
               <div class="bar-cell">
@@ -240,6 +263,7 @@ function cancellationList(reasons) {
  * Render
  * ----------------------------------------------------------------------- */
 export function render(root) {
+  mounted = root;
   const site = currentSite();
   const overall = stats?.overall;
   const days = stats?.by_day || [];
@@ -266,8 +290,6 @@ export function render(root) {
         <span>Sampai</span>
         <input class="input" type="date" id="an-to" value="${esc(range.to)}" max="${toDateInputValue()}" />
       </label>
-      <div></div>
-      <div></div>
       <div class="table-actions">
         <button type="button" class="btn btn-primary" id="an-apply">Terapkan</button>
       </div>

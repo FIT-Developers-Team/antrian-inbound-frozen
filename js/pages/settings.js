@@ -236,7 +236,7 @@ export function render(root) {
                 (fleet) => `<tr>
                   <td><strong>${esc(fleet.label)}</strong></td>
                   <td class="numeric">${esc(fleet.slaHours)} jam</td>
-                  <td>${esc(fleet.note)}${
+                  <td class="cell-wrap">${esc(fleet.note)}${
                     SKU_TIERED_FLEETS.includes(fleet.value)
                       ? ' <span class="chip">2 jam sampai 40 SKU, 4 jam di atas 40</span>'
                       : ""

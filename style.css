@@ -30,15 +30,31 @@
   --line-strong: #cbd6e5;
   --text: #10213a;
   --text-soft: #4c5f78;
-  --text-muted: #718198;
-  --accent: #2563eb;
+  /* Skala status tema terang diperdalam satu langkah dari nilai pinjaman
+     aslinya. Sebabnya bukan selera: hampir semua pemakainya di aplikasi ini
+     adalah teks KECIL — `.fact span` 9px, `.dock-state` 10px, `.sla-note` 10px,
+     `.badge` 10px, `.eyebrow` 11px — dan teks kecil menuntut 4,5:1, bukan 3:1.
+     Pada nilai lama `--text-muted` hanya mencapai 3,7:1 di atas latar halaman
+     dan lencana teal jatuh ke 2,9:1; keduanya masih terbaca di monitor kantor
+     dan tidak lagi terbaca di tablet gudang yang berembun di bawah lampu
+     dingin. Tema gelap tidak ikut berubah — nilainya sudah lolos. */
+  --text-muted: #616f85;
+  --accent: #1e51c4;
   --accent-soft: #dbeafe;
-  --teal: #0f9f8f;
+  /* Tinta di atas bidang penuh warna aksen/teal. Tombol primer dan tombol teal
+     memakai warnanya sebagai LATAR, jadi tintanya harus berlawanan arah dengan
+     temanya: putih di atas biru tua tema terang, biru sangat gelap di atas biru
+     muda tema gelap. Sebelumnya keduanya dipaku `#fff`, dan di tema gelap itu
+     berarti teks putih di atas #6fa4ff — 2,5:1 pada tombol yang paling sering
+     ditekan di seluruh aplikasi. */
+  --accent-ink: #ffffff;
+  --teal: #0a7669;
   --teal-soft: #dff7f2;
-  --status-normal: #15945f;
-  --status-monitor: #b58212;
-  --status-warning: #d86a17;
-  --status-critical: #cf3f58;
+  --teal-ink: #ffffff;
+  --status-normal: #0f744a;
+  --status-monitor: #8a6009;
+  --status-warning: #b4550c;
+  --status-critical: #b82743;
   --shadow: 0 12px 32px rgb(16 33 58 / 8%);
   --radius: 14px;
   --sidebar: 232px;
@@ -60,8 +76,10 @@
   --text-muted: #8593aa;
   --accent: #6fa4ff;
   --accent-soft: #18335e;
+  --accent-ink: #06152f;
   --teal: #3fd0bd;
   --teal-soft: #123b3a;
+  --teal-ink: #04241f;
   --status-normal: #42d18d;
   --status-monitor: #e5b94f;
   --status-warning: #ff9850;
@@ -83,8 +101,10 @@
     --text-muted: #8593aa;
     --accent: #6fa4ff;
     --accent-soft: #18335e;
+    --accent-ink: #06152f;
     --teal: #3fd0bd;
     --teal-soft: #123b3a;
+    --teal-ink: #04241f;
     --status-normal: #42d18d;
     --status-monitor: #e5b94f;
     --status-warning: #ff9850;
@@ -209,7 +229,7 @@ kbd,
   padding: 10px 14px;
   border-radius: 10px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   font-weight: 600;
   transform: translateY(-180%);
 }
@@ -319,8 +339,8 @@ kbd,
 
 .rail-toggle {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
   flex: 0 0 auto;
   place-items: center;
   border: 0;
@@ -496,6 +516,16 @@ kbd,
   gap: 8px;
 }
 
+/* Kelompok tombol MEMBUNGKUS; hanya topbar yang tidak, karena tingginya tetap.
+   Tanpa ini tiga tombol tema di layar Pengaturan meluber 21 piksel melewati tepi
+   kartunya pada layar 320px — dan tombol terakhir, "Ikut sistem", terpotong
+   separuh oleh `overflow: hidden` milik `.section`. */
+.page-actions,
+.section-actions,
+.table-actions {
+  flex-wrap: wrap;
+}
+
 .eyebrow {
   color: var(--text-muted);
   font-size: 11px;
@@ -504,8 +534,12 @@ kbd,
   text-transform: uppercase;
 }
 
-/* Indikator koneksi/sinkronisasi di topbar. */
-.sync-control,
+/* Indikator koneksi/sinkronisasi di topbar.
+ *
+ * Kelas `.sync-control` yang dulu menemani `.data-mode` di sini sudah dihapus:
+ * tidak ada satu pun berkas yang pernah merendernya, dan salinan aturan titik
+ * `paused`/`offline` miliknya membuat seolah ada dua indikator yang harus
+ * dijaga selaras. */
 .data-mode {
   display: inline-flex;
   min-height: 36px;
@@ -516,19 +550,10 @@ kbd,
   border-radius: 9px;
   background: var(--surface);
   color: var(--text-soft);
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
-.sync-control {
-  cursor: pointer;
-}
-
-.sync-control:hover {
-  border-color: var(--line-strong);
-  color: var(--text);
-}
-
-.sync-control i,
 .data-mode i,
 .metric-label i {
   width: 7px;
@@ -536,18 +561,6 @@ kbd,
   flex: 0 0 auto;
   border-radius: 999px;
   background: var(--teal);
-}
-
-.sync-control i.paused {
-  background: var(--status-warning);
-}
-
-.sync-control i.offline {
-  background: var(--status-critical);
-}
-
-.data-mode {
-  font-family: var(--font-mono);
 }
 
 .live-clock {
@@ -574,6 +587,10 @@ kbd {
   max-width: 1680px;
   margin: 0 auto;
   padding: 24px;
+  /* Topbar melekat di atas dan menutupi 72 piksel pertama halaman. Apa pun yang
+     digulir ke dalam pandangan oleh browser — fokus keyboard, tautan lompat,
+     pemulihan gulir — karena itu harus berhenti di bawahnya, bukan di baliknya. */
+  scroll-margin-top: calc(var(--topbar-height) + 8px);
 }
 
 .dashboard-page {
@@ -733,25 +750,25 @@ kbd {
 .btn-primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
 }
 
 .btn-primary:hover:not(:disabled) {
   border-color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 88%, black);
-  color: #fff;
+  background: color-mix(in oklab, var(--accent) 88%, var(--accent-ink));
+  color: var(--accent-ink);
 }
 
 .btn-teal {
   border-color: var(--teal);
   background: var(--teal);
-  color: #04241f;
+  color: var(--teal-ink);
 }
 
 .btn-teal:hover:not(:disabled) {
   border-color: var(--teal);
-  background: color-mix(in oklab, var(--teal) 88%, black);
-  color: #04241f;
+  background: color-mix(in oklab, var(--teal) 88%, var(--teal-ink));
+  color: var(--teal-ink);
 }
 
 .btn-ghost {
@@ -905,16 +922,42 @@ select.input {
   grid-column: 1 / -1;
 }
 
+/* Bilah filter — FLEKS, bukan grid berkolom tetap.
+ *
+ * Bentuk sebelumnya memaku lima kolom untuk bilah yang isinya berbeda di tiap
+ * halaman: papan mengisi tiga, Laporan dan Analitik dua. Kolom yang tidak
+ * terisi tetap memakan lebarnya, jadi papan menyisakan dua kolom kosong selebar
+ * 300 piksel di tengah bilah dengan chip "8 tiket" terdampar di kolom ketiga —
+ * dan Laporan menambalnya dengan dua `<div></div>` kosong, yang hanya
+ * memindahkan persoalan. Dengan fleks tiap bilah selebar isinya sendiri. */
 .filter-bar {
-  display: grid;
+  display: flex;
   min-width: 0;
-  grid-template-columns: minmax(200px, 1.4fr) repeat(3, minmax(140px, 1fr)) auto;
+  flex-wrap: wrap;
   align-items: end;
-  gap: 10px;
+  gap: 10px 12px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+.filter-bar > label {
+  min-width: 150px;
+  max-width: 320px;
+  flex: 1 1 180px;
+}
+
+/* Kotak pencarian tumbuh lebih dulu: ia yang paling sering dipakai, dan
+   isinya — nomor antrean, vendor, plat, PO — yang paling panjang. */
+.filter-bar > label:has(input[type="search"]) {
+  max-width: none;
+  flex: 3 1 240px;
+}
+
+.filter-bar .table-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .chip,
@@ -1106,6 +1149,30 @@ select.input {
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: middle;
+  /* Sel TIDAK membungkus; `.table-scroll` di sekelilingnya yang menggulir.
+     Sebelumnya sel membungkus, dan nama vendor sepanjang "PT Sukanda Djaya
+     Diamond Cold Storage Indonesia Tbk" membuat satu baris tabel setinggi enam
+     baris teks — sekitar 250 piksel untuk satu tiket, sehingga empat tiket saja
+     sudah menghabiskan layar ponsel. */
+  white-space: nowrap;
+}
+
+/* Kolom teks bebas yang boleh sangat panjang. Ia dipotong dengan ellipsis
+   supaya satu nama vendor tidak melebarkan tabel sampai kolom di sebelahnya
+   tidak pernah terlihat; nilai penuhnya tetap ada di atribut `title`. */
+.tbl td.cell-text {
+  max-width: 26ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Sel penjelas — kalimat yang memang ditulis untuk dibaca, bukan dipindai.
+   Ia boleh membungkus, tetapi dengan lebar terjaga agar tidak menjadi satu
+   kolom raksasa. */
+.tbl td.cell-wrap {
+  min-width: 200px;
+  max-width: 42ch;
+  white-space: normal;
 }
 
 .tbl thead th {
@@ -1463,11 +1530,19 @@ select.input {
   font-variant-numeric: tabular-nums;
 }
 
+/* Aksi kartu. Kolomnya MEMBUNGKUS, tidak dipaksa berjajar.
+ *
+ * `grid-auto-flow: column` memeras berapa pun jumlah tombol ke satu baris
+ * selebar sama. Kartu WAITING punya empat, jadi pada kartu 320px tiap tombol
+ * mendapat 78 piksel untuk label yang butuh 94 — dan karena tombolnya
+ * `white-space: nowrap`, teksnya meluber dan bertumpuk dengan tetangganya:
+ * "Catat datang" menabrak "Panggil", "Panggil" menabrak "Mulai bongkar".
+ * `auto-fit` memberi tiap tombol lantai selebar label terpanjangnya, dan yang
+ * tidak muat turun ke baris berikutnya. */
 .queue-actions {
   display: grid;
   gap: 8px;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
 }
 
 .queue-po-list {
@@ -1479,8 +1554,14 @@ select.input {
 /* --------------------------------------------------------------------------
  * 9. Input plat nomor & armada
  * ----------------------------------------------------------------------- */
+/* Lebarnya dibatasi supaya ketiga kotak tetap sebanding dengan plat yang
+   sebenarnya. Tanpa batas ini kolom tengah mengambil seluruh sisa baris — di
+   desktop sekitar 400 piksel untuk empat digit, dengan kode wilayah dan huruf
+   seri terdampar jauh di kedua ujungnya, dan bentuk yang seharusnya langsung
+   dikenali sebagai plat nomor berhenti terlihat seperti plat nomor. */
 .plate-input {
   display: grid;
+  max-width: 330px;
   grid-template-columns: 62px minmax(0, 1fr) 78px;
   gap: 6px;
 }
@@ -1673,16 +1754,24 @@ select.input {
   object-fit: cover;
 }
 
-/* Tirai gelap di sepertiga bawah: tanpa ini, judul dan deskripsi duduk di atas
-   ilustrasi penuh warna dan kontrasnya jatuh di bawah ambang WCAG. */
+/* Tirai di sepertiga bawah: tanpa ini, judul dan deskripsi duduk di atas
+   ilustrasi penuh warna dan kontrasnya jatuh di bawah ambang WCAG.
+ *
+ * Ia baru mencapai warna penuh pada 100%, artinya tepat di baris terakhir —
+ * dan blok teksnya menempati kira-kira seperlima bawah panel, jadi hampir
+ * seluruhnya duduk di atas tirai yang masih tembus pandang. Ilustrasinya
+ * kebetulan memuat huruf raksasa sendiri persis di pita itu, sehingga eyebrow
+ * "ASTRONAUTS OPERATIONS" dan judul aplikasi terbaca bertumpuk di atas tulisan
+ * milik gambar. Tirainya karena itu pekat sebelum blok teks dimulai, bukan
+ * sesudahnya. */
 .login-art::after {
   position: absolute;
   inset: 0;
   background: linear-gradient(
     180deg,
-    transparent 30%,
-    color-mix(in oklab, var(--bg) 82%, transparent) 72%,
-    var(--bg) 100%
+    transparent 34%,
+    color-mix(in oklab, var(--bg) 68%, transparent) 62%,
+    var(--bg) 82%
   );
   content: "";
 }
@@ -1692,8 +1781,13 @@ select.input {
   z-index: 1;
 }
 
-.login-art h2 {
+.login-art h1 {
   font-size: clamp(26px, 3vw, 38px);
+}
+
+.login-form h2 {
+  margin-top: 4px;
+  font-size: 26px;
 }
 
 .login-art p {
@@ -1793,9 +1887,15 @@ select.input {
   --ease: cubic-bezier(0.2, 0, 0.1, 1);
 }
 
-:root:not(.light) {
-  color-scheme: light;
-}
+/* `color-scheme` sengaja TIDAK dinyatakan ulang di sini.
+ *
+ * Bagian ini pernah memuat `:root:not(.light) { color-scheme: light }`, yang
+ * lebih spesifik (0,2,0) daripada `html.dark` di bagian 2 (0,1,1) dan berada
+ * lebih belakang — jadi skema warna selalu terang, bahkan ketika operator
+ * memilih tema gelap. Token CSS tetap gelap, tetapi segala yang digambar
+ * browser sendiri tidak: daftar `<select>`, pemilih `datetime-local`, batang
+ * gulir, dan latar autofill muncul putih di atas papan gelap. Bagian 2 sudah
+ * menyatakannya dengan benar; baris di sini hanya dapat merusaknya. */
 
 .dark {
   --elev-1: 0 1px 2px rgb(0 0 0 / 30%);
@@ -1850,7 +1950,13 @@ select.input {
 .dock-rail {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(96px, 1fr);
+  /* Lantai 96px dulu terlalu sempit untuk isinya sendiri: nomor dok setinggi
+     20px ditambah label keadaan ("Lewat SLA", "Bongkar") tidak muat pada satu
+     baris, sehingga labelnya terpotong tepi ubin — ubin memakai
+     `overflow: hidden` — atau membungkus dan membuat satu ubin lebih tinggi
+     daripada delapan tetangganya. Rel ini memang menggulir mendatar; melebarkan
+     ubinnya tidak menyembunyikan apa pun. */
+  grid-auto-columns: minmax(116px, 1fr);
   gap: 8px;
   margin-bottom: 4px;
   overflow-x: auto;
@@ -1875,10 +1981,11 @@ select.input {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
 }
 
 .dock-no {
+  flex: 0 0 auto;
   font-family: var(--font-mono);
   font-size: 20px;
   font-weight: 700;
@@ -1888,11 +1995,18 @@ select.input {
   color: var(--text);
 }
 
+/* Label keadaan mengalah lebih dulu ketika ruangnya habis. Tanpa `min-width: 0`
+   anak fleks menolak menyusut di bawah lebar teksnya, jadi ellipsis-nya tidak
+   pernah berlaku dan teksnya terpotong tepi ubin. */
 .dock-state {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  overflow: hidden;
+  min-width: 0;
   color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .dock-occupant {
@@ -2358,10 +2472,6 @@ select.input {
   .dashboard-grid-main {
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .filter-bar {
-    grid-template-columns: repeat(3, minmax(140px, 1fr));
-  }
 }
 
 @media (max-width: 900px) {
@@ -2370,19 +2480,15 @@ select.input {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .sidebar {
-    position: fixed;
-    left: 0;
-    width: min(280px, 86vw);
-    box-shadow: var(--shadow);
-    pointer-events: none;
-    transform: translateX(-105%);
-    visibility: hidden;
-  }
+  /* Sidebar di bawah 900px BUKAN laci samping lagi melainkan bilah navigasi
+     bawah; bentuknya ada di bagian 16.
 
-  .sidebar.rail {
-    width: min(280px, 86vw);
-  }
+     Sisa aturan laci lama sempat bertahan di sini, dan dua di antaranya tidak
+     pernah dinyatakan ulang oleh blok bilah bawah: `visibility: hidden` dan
+     `pointer-events: none`. Bilahnya karena itu ada di dalam tata letak —
+     `.workspace` bahkan menyisakan 76 piksel untuknya — tetapi tidak pernah
+     tergambar dan tidak pernah dapat disentuh, sehingga di ponsel dan tablet
+     aplikasi ini hanya punya satu halaman: papan antrean. */
 
   .sidebar.rail .nav-link {
     justify-content: flex-start;
@@ -2425,10 +2531,6 @@ select.input {
     grid-column: auto;
   }
 
-  .filter-bar {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .metric-strip,
   .metric-strip-four,
   .metric-strip-three {
@@ -2458,17 +2560,40 @@ select.input {
   }
 
   .topbar-context .eyebrow,
-  .data-mode,
   .live-clock {
     display: none;
+  }
+
+  /* Pil status TETAP tampil, hanya menyusut.
+
+     Sebelumnya ia disembunyikan bersama jam dinding, seolah keduanya sama-sama
+     hiasan. Jam memang hiasan; pil ini satu-satunya tempat papan mengatakan
+     bahwa ia terputus, bahwa master PO membeku, atau bahwa jam tablet meleset
+     sehingga setiap jam kedatangan hari itu salah — dan perangkat yang paling
+     sering dipakai di gudang justru yang tidak pernah diberi tahu. Teksnya
+     dipotong bila ruangnya habis; titik warna dan `title` tetap utuh. */
+  .data-mode {
+    max-width: 148px;
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+
+  .data-mode span {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .board-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* Lantai kolom dilonggarkan sedikit di ponsel: kartu selebar layar masih
+     memuat dua tombol berdampingan, dan empat tombol bertumpuk sendiri-sendiri
+     mendorong kartu berikutnya keluar layar. */
   .queue-actions {
-    grid-auto-flow: row;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   }
 
   .page-header {
@@ -2617,12 +2742,28 @@ select.input {
  * animasi. Yang berubah hanya kerapatan dan urutan — dan ke mana ibu jari harus
  * bergerak.
  * ----------------------------------------------------------------------- */
-/* Disclosure filter. Di layar lebar ia BUKAN disclosure sama sekali: ringkasan
-   disembunyikan dan isinya sejajar dengan kotak pencarian, persis seperti
-   sebelum ada bagian ini. Pelipatan hanya berlaku di ponsel, tempat 192 piksel
-   filter yang selalu terbuka mengalahkan tiket yang sedang dicari. */
+/* Disclosure filter. Di layar lebar ringkasannya disembunyikan dan isinya
+   berdiri sejajar dengan kotak pencarian; pelipatan hanya berlaku di ponsel,
+   tempat 192 piksel filter yang selalu terbuka mengalahkan tiket yang sedang
+   dicari.
+ *
+ * Ia TIDAK memakai `display: contents`, dan itu pernah dicoba serta gagal dua
+ * kali sekaligus. Pertama, keadaan tutup `<details>` tetap berlaku: selama
+ * atribut `open` tidak ada, isinya tidak pernah digambar maupun dapat diklik
+ * sekalipun kotaknya sudah dilarutkan — jadi papan antrean tidak punya filter
+ * status maupun gate sama sekali di atas 720px. Kedua, `display: contents` tidak
+ * benar-benar melarutkan `<details>`: browser menyisipkan kotaknya sendiri
+ * (`::details-content`) di antara elemen dan isinya, sehingga kedua medan
+ * bertumpuk sebagai blok di ujung kanan bilah alih-alih berjajar.
+ *
+ * Bentuk di bawah tidak bergantung pada keduanya: disclosure-nya sebuah item
+ * fleks biasa, dan isinya diatur fleks miliknya sendiri. Yang tersisa untuk
+ * JavaScript hanyalah memasang `open` di layar lebar — `open` sebuah atribut,
+ * bukan gaya; lihat `wideFilters()` di board.js. */
 .filter-more {
-  display: contents;
+  display: block;
+  min-width: 0;
+  flex: 2 1 300px;
 }
 
 .filter-more > summary {
@@ -2630,13 +2771,19 @@ select.input {
 }
 
 .filter-more-body {
-  display: contents;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+.filter-more-body > label {
+  min-width: 128px;
+  flex: 1 1 140px;
 }
 
 @media (max-width: 720px) {
   .filter-more {
-    display: block;
-    grid-column: 1 / -1;
+    flex: 1 1 100%;
   }
 
   .filter-more > summary {
@@ -2644,7 +2791,6 @@ select.input {
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    min-height: 38px;
     padding: 0 4px;
     cursor: pointer;
     list-style: none;
@@ -2851,7 +2997,10 @@ select.input {
     display: none;
   }
 
+  /* Tinggi minimum ikut turun bersama isinya: 108px dipilih ketika kartu masih
+     memuat tiga baris, dan keterangannya disembunyikan tepat di bawah ini. */
   .metric-card {
+    min-height: 72px;
     gap: 2px;
     padding: 9px 11px;
     border-radius: 11px;
@@ -2868,18 +3017,25 @@ select.input {
   }
 
   /* -- Filter -------------------------------------------------------------
-     Tiga medan selebar layar menjadi tiga baris penuh. Pencarian tetap
-     selebar layar karena ia yang paling sering disentuh; status dan gate
-     berbagi satu baris di bawahnya. */
+     Pencarian mengambil satu baris penuh karena ia yang paling sering
+     disentuh; medan lain berbagi baris berdua. Aturannya menyebut JENIS
+     medannya, bukan urutannya: `:first-child` dulu memberi baris penuh kepada
+     apa pun yang kebetulan pertama, sehingga di Laporan medan "Dari" melebar
+     penuh sementara "Sampai" tinggal setengah — satu rentang tanggal yang
+     digambar sebagai dua medan yang tidak sepadan. */
   .filter-bar {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 8px 10px;
     padding: 10px;
   }
 
-  .filter-bar > label:first-child {
-    grid-column: 1 / -1;
+  .filter-bar > label {
+    min-width: 132px;
+    max-width: none;
+    flex: 1 1 calc(50% - 5px);
+  }
+
+  .filter-bar > label:has(input[type="search"]) {
+    flex: 1 1 100%;
   }
 
   .filter-bar label span {
@@ -2887,13 +3043,9 @@ select.input {
   }
 
   .filter-bar .table-actions {
-    grid-column: 1 / -1;
+    flex: 1 1 100%;
+    margin-left: 0;
     justify-content: flex-start;
-  }
-
-  /* Medan kosong yang hanya ada untuk menjaga kolom di layar lebar. */
-  .filter-bar > div:empty {
-    display: none;
   }
 
   /* -- Kartu antrean ------------------------------------------------------
@@ -2920,7 +3072,7 @@ select.input {
      Ubin lebih sempit supaya lebih banyak pintu terlihat sekaligus sebelum
      perlu menggulir. */
   .dock-rail {
-    grid-auto-columns: minmax(84px, 1fr);
+    grid-auto-columns: minmax(108px, 1fr);
     gap: 6px;
   }
 
@@ -2932,7 +3084,18 @@ select.input {
     font-size: 17px;
   }
 
-  /* -- Bagian dan grafik --------------------------------------------------- */
+  /* -- Bagian dan grafik ---------------------------------------------------
+     Kanvas grafik mengecil bersama layar (`useGeometry()` di charts.js), jadi
+     satu unit SVG kini hampir satu piksel; label dinaikkan satu langkah supaya
+     tiba pada ukuran yang sama seperti di desktop. */
+  .chart-axis {
+    font-size: 11px;
+  }
+
+  .chart-label {
+    font-size: 12px;
+  }
+
   .section-body {
     padding: 12px;
   }

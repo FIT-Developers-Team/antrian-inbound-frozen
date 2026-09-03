@@ -62,7 +62,11 @@ function renderLogin() {
     <section class="login-art">
       <img src="assets/login-banner.webp" alt="" aria-hidden="true" />
       <span class="eyebrow">Astronauts Operations</span>
-      <h2>${esc(BRAND_SHORT)}</h2>
+      <!-- Nama aplikasi adalah judul tingkat satu halaman ini, dan ia muncul
+           lebih dulu di dokumen. Sebelumnya urutannya terbalik — <h2> di sini
+           dan <h1> di formulir — sehingga pembaca layar menemui tingkat dua
+           sebelum tingkat satu. -->
+      <h1>${esc(BRAND_SHORT)}</h1>
       <p>Antrean inbound gudang beku: satu papan untuk kedatangan, bongkar, dan hitung mundur SLA.</p>
     </section>
 
@@ -71,7 +75,7 @@ function renderLogin() {
         <img src="assets/login-logo.png" alt="" aria-hidden="true" />
         <div>
           <span class="eyebrow">Masuk</span>
-          <h1 style="font-size:26px;margin-top:4px">Selamat datang</h1>
+          <h2>Selamat datang</h2>
         </div>
         <label>
           <span>Username</span>
@@ -140,8 +144,13 @@ function navMarkup(role) {
       // sebelum data pertama tiba, jadi membuat elemennya hanya ketika sudah
       // ada antrean berarti ia tidak pernah muncul sama sekali.
       const count = key === "board" ? `<b id="nav-waiting" hidden>0</b>` : "";
+      // `aria-label` bukan pengulangan yang mubazir. Di bilah bawah pada layar
+      // sangat sempit, label teksnya `display: none` — dan simpul yang
+      // disembunyikan begitu ikut hilang dari pohon aksesibilitas, sementara
+      // ikonnya sendiri `aria-hidden`. Tanpa baris ini kelima tombol navigasi
+      // dibacakan sebagai "tombol" tanpa nama sama sekali.
       return `<button type="button" class="nav-link${key === activePage ? " active" : ""}"
-        data-page="${key}"${key === activePage ? ' aria-current="page"' : ""}>
+        data-page="${key}" aria-label="${esc(page.label)}"${key === activePage ? ' aria-current="page"' : ""}>
         ${icon(page.icon)}<span>${esc(page.label)}</span>${count}
       </button>`;
     })
@@ -265,7 +274,18 @@ function navigate(page) {
   });
   document.getElementById("topbar-eyebrow").textContent = PAGES[page].subtitle;
   renderPage();
-  document.getElementById("page-root")?.focus();
+
+  // Fokus dipindahkan TANPA menggulir, lalu halaman digulir ke puncaknya
+  // sendiri.
+  //
+  // `focus()` polos menggulir elemennya ke dalam pandangan, dan browser
+  // menganggap "dalam pandangan" berarti tepi atas viewport — yang di aplikasi
+  // ini tertutup topbar setinggi 72 piksel. Hasilnya halaman berhenti pada
+  // scrollY 72: eyebrow halaman hilang seluruhnya di balik topbar dan judulnya
+  // terpotong separuh, pada setiap perpindahan menu. Halaman baru juga memang
+  // seharusnya dimulai dari atas, bukan dari posisi gulir halaman sebelumnya.
+  document.getElementById("page-root")?.focus({ preventScroll: true });
+  globalThis.scrollTo({ top: 0, behavior: "instant" });
 }
 
 function renderPage() {

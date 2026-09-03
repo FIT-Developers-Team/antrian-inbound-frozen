@@ -208,8 +208,27 @@ test("filter lanjutan terlipat di ponsel tetapi tetap menyatakan keadaannya", ()
   // memang hanya punya tiga tiket.
   assert.match(board, /id="board-filter-summary"/);
   assert.match(board, /syncFilterSummary\(\)/);
-  // Di layar lebar ia bukan disclosure sama sekali.
-  assert.match(css, /\.filter-more \{\s*display: contents;/);
+
+  // Di layar lebar ia bukan disclosure sama sekali: ringkasannya disembunyikan
+  // dan isinya berjajar dengan kotak pencarian.
+  assert.match(css, /\.filter-more > summary \{\s*display: none;/);
+  assert.match(css, /\.filter-more-body \{\s*display: flex;/);
+
+  // Dan ia HARUS dibuka dari JavaScript di layar lebar.
+  //
+  // `display: contents` sempat dipakai untuk melarutkan kotaknya, dan gagal dua
+  // kali: keadaan tutup `<details>` tetap menahan isinya dari penggambaran
+  // (medan Status dan Gate ditata tetapi tidak pernah terlihat maupun dapat
+  // diklik di atas 720px), dan browser tetap menyisipkan `::details-content`
+  // sehingga kedua medan bertumpuk sebagai blok alih-alih berjajar. `open`
+  // adalah atribut, bukan gaya, jadi hanya JavaScript yang dapat memasangnya.
+  assert.match(board, /onBreakpoint\("\(min-width: 721px\)"/);
+  assert.match(board, /wideFilters\(\) \|\| filters\.status/);
+  assert.doesNotMatch(
+    css,
+    /\.filter-more \{\s*display: contents;/,
+    "display: contents pada <details> membuat filter status dan gate tidak dapat diklik",
+  );
 });
 
 test("anak grid tidak dapat melebarkan halaman ke samping", () => {

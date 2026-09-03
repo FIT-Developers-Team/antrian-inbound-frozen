@@ -322,6 +322,41 @@ export function setBusy(root, busy) {
  * Seratus dua puluh milidetik cukup pendek untuk terasa seketika dan cukup
  * panjang untuk melewati seluruh ketukan di tengah kata.
  */
+/**
+ * Memanggil `onChange` ketika layar MELINTASI sebuah ambang, bukan setiap kali
+ * ukurannya bergeser.
+ *
+ * Dipakai untuk hal-hal yang dipilih sekali pada saat render dan tidak dapat
+ * dinyatakan dalam CSS: kanvas grafik, dan atribut `open` milik disclosure
+ * filter. Tablet gudang diputar antara lanskap dan potret sepanjang hari, dan
+ * tanpa ini keduanya bertahan pada pilihan yang dibuat untuk orientasi
+ * sebelumnya sampai halaman kebetulan digambar ulang.
+ *
+ * Yang didengarkan adalah `resize`, bukan `change` milik MediaQueryList.
+ * Keduanya benar di browser sungguhan, tetapi `resize` juga tiba pada viewport
+ * yang diemulasikan alat uji — sehingga perilakunya dapat dibuktikan, bukan
+ * sekadar diyakini. Perbandingan boolean menjaga agar penggambaran ulang hanya
+ * terjadi pada lintasan ambang, bukan pada tiap piksel selama jendela diseret.
+ *
+ * @param {string} query  Kueri media, mis. "(max-width: 720px)".
+ * @param {(matches: boolean) => void} onChange
+ * @returns {() => boolean} Pembaca keadaan ambang saat ini.
+ */
+export function onBreakpoint(query, onChange) {
+  const media = globalThis.matchMedia?.(query);
+  const matches = () => Boolean(media ? media.matches : false);
+  let previous = matches();
+
+  globalThis.addEventListener?.("resize", () => {
+    const current = matches();
+    if (current === previous) return;
+    previous = current;
+    onChange(current);
+  });
+
+  return matches;
+}
+
 export function debounce(fn, waitMs = 120) {
   let timer = null;
   const debounced = (...args) => {

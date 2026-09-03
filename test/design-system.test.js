@@ -14,7 +14,13 @@ const { read, allFrontend } = require("./helpers");
 const css = read("style.css");
 const html = read("index.html");
 
-/** Token yang nilainya harus sama persis dengan app/globals.css milik hub. */
+/**
+ * Token yang nilainya harus sama persis dengan app/globals.css milik hub.
+ *
+ * Bidang, garis, dan geometri dipinjam apa adanya: itulah yang membuat kedua
+ * aplikasi terlihat serumpun, dan tidak satu pun darinya pernah menjadi warna
+ * huruf.
+ */
 const SHARED_TOKENS = {
   "--bg": "#f4f7fb",
   "--surface": "#ffffff",
@@ -24,16 +30,42 @@ const SHARED_TOKENS = {
   "--line-strong": "#cbd6e5",
   "--text": "#10213a",
   "--text-soft": "#4c5f78",
-  "--text-muted": "#718198",
-  "--accent": "#2563eb",
-  "--teal": "#0f9f8f",
-  "--status-normal": "#15945f",
-  "--status-monitor": "#b58212",
-  "--status-warning": "#d86a17",
-  "--status-critical": "#cf3f58",
   "--radius": "14px",
   "--sidebar": "232px",
   "--topbar-height": "72px",
+};
+
+/**
+ * Token yang SENGAJA lebih gelap daripada milik hub, beserta alasannya.
+ *
+ * Ketujuh token ini di hub dipakai sebagai aksen dan bidang pada dasbor kantor.
+ * Di sini hampir seluruh pemakaiannya adalah TEKS, dan teks yang kecil:
+ * `.fact span` 9px, `.dock-state` 10px, `.badge` 10px, `.sla-note` 10px,
+ * `.eyebrow` 11px, `.metric-sub` 11px. WCAG menuntut 4,5:1 untuk ukuran itu,
+ * bukan 3:1 — dan pada nilai hub tidak satu pun mencapainya:
+ *
+ *   --text-muted     #718198  3,69:1 di atas --bg
+ *   --teal           #0f9f8f  2,94:1 sebagai teks .badge-teal
+ *   --status-normal  #15945f  3,87:1 sebagai teks .badge-normal
+ *   --status-monitor #b58212  3,41:1
+ *   --status-warning #d86a17  3,50:1  ← dipakai hitung mundur SLA menjelang tenggat
+ *   --accent         #2563eb  4,06:1 sebagai teks .badge-accent
+ *
+ * Angka SLA yang tidak terbaca bukan cacat kosmetik: papan ini dibaca sambil
+ * berjalan, bersarung tangan, di ruang beku yang layarnya berembun. Hue-nya
+ * tidak bergeser — hanya satu langkah lebih pekat — sehingga kedua aplikasi
+ * tetap terlihat serumpun.
+ *
+ * Bila hub kelak ikut memperdalam skalanya, kedua daftar ini menyatu kembali.
+ */
+const CONTRAST_TOKENS = {
+  "--text-muted": "#616f85",
+  "--accent": "#1e51c4",
+  "--teal": "#0a7669",
+  "--status-normal": "#0f744a",
+  "--status-monitor": "#8a6009",
+  "--status-warning": "#b4550c",
+  "--status-critical": "#b82743",
 };
 
 const DARK_TOKENS = {
@@ -46,11 +78,37 @@ const DARK_TOKENS = {
   "--status-critical": "#ff7388",
 };
 
+function lightRoot() {
+  return css.slice(css.indexOf(":root {"), css.indexOf("}", css.indexOf(":root {")));
+}
+
 test("token tema terang identik dengan design system outbound-operations-hub", () => {
-  const root = css.slice(css.indexOf(":root {"), css.indexOf("}", css.indexOf(":root {")));
+  const root = lightRoot();
   Object.entries(SHARED_TOKENS).forEach(([token, value]) => {
     assert.match(root, new RegExp(`${token}:\\s*${value.replace(/[()]/g, "\\$&")};`), `${token} harus ${value}`);
   });
+});
+
+test("skala status tema terang cukup pekat untuk teks kecil", () => {
+  const root = lightRoot();
+  Object.entries(CONTRAST_TOKENS).forEach(([token, value]) => {
+    assert.match(
+      root,
+      new RegExp(`${token}:\\s*${value};`),
+      `${token} harus ${value} — lihat catatan CONTRAST_TOKENS sebelum menurunkannya`,
+    );
+  });
+});
+
+test("tinta di atas bidang aksen dan teal mengikuti tema", () => {
+  // Tombol primer dan tombol teal memakai warnanya sebagai LATAR, jadi tintanya
+  // harus berlawanan arah dengan temanya. Sebelum token ini ada, keduanya dipaku
+  // `#fff` — dan di tema gelap itu berarti putih di atas #6fa4ff, 2,5:1, pada
+  // tombol yang paling sering ditekan di seluruh aplikasi.
+  assert.match(css, /\.btn-primary \{[^}]*color: var\(--accent-ink\)/s);
+  assert.match(css, /\.btn-teal \{[^}]*color: var\(--teal-ink\)/s);
+  assert.match(lightRoot(), /--accent-ink:\s*#ffffff;/);
+  assert.match(css.slice(css.indexOf(".dark {")), /--accent-ink:\s*#06152f;/);
 });
 
 test("token tema gelap identik dengan design system outbound-operations-hub", () => {
@@ -151,8 +209,17 @@ test("hanya ada satu berkas gaya dan ukurannya wajar", () => {
   //
   // Bila angka ini perlu naik lagi, pertanyaannya bukan "berapa" melainkan
   // "gaya apa yang baru saja bertambah, dan apakah ia berhak ada".
+  //
+  // Naik lagi dari 72 KB ke 78 KB setelah audit tata letak menyeluruh. Yang
+  // bertambah dapat disebut satu per satu: bilah filter berbasis fleks
+  // (menggantikan grid lima kolom yang menyisakan dua kolom kosong), sel tabel
+  // yang tidak lagi membungkus beserta dua kelas lebarnya, ubin dok yang
+  // memotong labelnya dengan ellipsis, pil status ringkas untuk ponsel, ukuran
+  // label grafik ponsel, dan `scroll-margin-top` supaya judul halaman tidak
+  // bersembunyi di balik topbar. Sifatnya tidak berubah: satu berkas, tanpa
+  // framework, tanpa kelas yang dibangkitkan.
   const bytes = Buffer.byteLength(css, "utf8");
-  assert.ok(bytes < 72_000, `style.css harus tetap ramping, sekarang ${bytes} byte`);
+  assert.ok(bytes < 78_000, `style.css harus tetap ramping, sekarang ${bytes} byte`);
   assert.equal((html.match(/rel="stylesheet"/g) || []).length, 2, "hanya font Google dan style.css");
 });
 

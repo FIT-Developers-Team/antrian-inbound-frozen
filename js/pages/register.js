@@ -230,6 +230,29 @@ export function render(root) {
             </div>`,
           })}
 
+        </div>
+
+        <!--
+          Urutan langkah mengikuti URUTAN BACA, bukan urutan berkas.
+
+          Sebelumnya "Langkah 3 · Driver" berada di kolom kiri dan "Langkah 2 ·
+          Purchase order" di kolom kanan. Di desktop mata membaca satu kolom
+          sampai habis lalu pindah ke kolom berikutnya, jadi yang terbaca adalah
+          1, 3, lalu 2; di ponsel kedua kolom bertumpuk dan urutannya menjadi
+          persis sama salahnya. Penomoran yang menyalahi urutannya sendiri lebih
+          buruk daripada tidak menomori sama sekali — ia memberi tahu operator
+          pos masuk bahwa ia melewatkan sesuatu, setiap kali.
+
+          Driver karena itu pindah ke bawah Purchase order. Kedua kolom kini
+          terbaca 1 → 2 → 3 dalam kedua tata letak.
+        -->
+        <div class="dashboard-page">
+          ${section({
+            eyebrow: "Langkah 2",
+            title: "Purchase order",
+            body: poPicker(),
+          })}
+
           ${section({
             eyebrow: "Langkah 3",
             title: "Driver",
@@ -245,14 +268,6 @@ export function render(root) {
                        value="${esc(form.driverPhone)}" autocomplete="off" />
               </label>
             </div>`,
-          })}
-        </div>
-
-        <div class="dashboard-page">
-          ${section({
-            eyebrow: "Langkah 2",
-            title: "Purchase order",
-            body: poPicker(),
           })}
 
           ${section({

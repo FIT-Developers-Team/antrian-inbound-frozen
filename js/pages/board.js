@@ -19,6 +19,7 @@ import {
   emptyState,
   icon,
   metricStrip,
+  onBreakpoint,
   pageHeader,
   toast,
   withBusy,
@@ -27,6 +28,29 @@ import { queueCard } from "./queue-card.js";
 
 /** Filter hanya di memori — tidak ada permintaan tambahan ke server. */
 const filters = { query: "", status: "AKTIF", gate: "" };
+
+/* --------------------------------------------------------------------------
+ * Disclosure filter di layar lebar
+ *
+ * Medan Status dan Gate hidup di dalam sebuah `<details>` supaya dapat dilipat
+ * di ponsel. Di layar lebar ringkasannya disembunyikan CSS dan isinya berdiri
+ * sejajar dengan kotak pencarian — tetapi selama atribut `open` tidak ada,
+ * browser tetap menolak menggambar isi `<details>` apa pun gayanya. Medannya
+ * ikut ditata (menyisakan pita kosong setinggi 40 piksel di dalam bilah filter)
+ * namun tidak pernah terlihat dan tidak pernah dapat diklik.
+ *
+ * Akibatnya papan antrean tidak punya filter status maupun gate sama sekali di
+ * setiap layar di atas 720px — yaitu di setiap desktop dan tablet lanskap yang
+ * dipakai supervisor.
+ *
+ * `open` adalah atribut, jadi hanya JavaScript yang dapat memasangnya. Ambangnya
+ * didengarkan sekali di tingkat modul; memasangnya di dalam render akan menumpuk
+ * satu pendengar setiap kali papan digambar ulang.
+ * ----------------------------------------------------------------------- */
+const wideFilters = onBreakpoint("(min-width: 721px)", (wide) => {
+  const disclosure = document.querySelector(".filter-more");
+  if (disclosure && wide) disclosure.open = true;
+});
 
 /* --------------------------------------------------------------------------
  * Rel dok
@@ -235,7 +259,7 @@ export function render(root) {
         Ringkasan pada ringkasannya menyebutkan filter yang sedang aktif,
         sehingga menutupnya tidak pernah menyembunyikan keadaan.
       -->
-      <details class="filter-more"${filters.status !== "AKTIF" || filters.gate ? " open" : ""}>
+      <details class="filter-more"${wideFilters() || filters.status !== "AKTIF" || filters.gate ? " open" : ""}>
         <summary>
           <span>Filter</span>
           <b id="board-filter-summary">${esc(filterSummary())}</b>

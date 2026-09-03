@@ -110,10 +110,17 @@ function summarize(list) {
 /* --------------------------------------------------------------------------
  * Tabel
  * ----------------------------------------------------------------------- */
+/**
+ * Kolom ketiga dari tiap entri menandai kolom TEKS BEBAS — nilai yang panjangnya
+ * tidak berbatas karena datang dari master vendor, bukan dari daftar tertutup.
+ * Sel semacam itu dipotong dengan ellipsis dan membawa nilai penuhnya di
+ * `title`; tanpa itu satu nama vendor sepanjang empat puluh karakter melebarkan
+ * kolomnya sampai kolom lain terdorong keluar dari pandangan.
+ */
 const COLUMNS = [
   ["Antrean", (row) => row.queue_no],
   ["Status", (row) => statusMeta(row.status).label],
-  ["Vendor", (row) => row.vendor_name || "-"],
+  ["Vendor", (row) => row.vendor_name || "-", true],
   ["Armada", (row) => fleetLabel(row.fleet_type)],
   ["Plat", (row) => row.plat_number || "-"],
   ["Gate", (row) => gateLabel(row.gate)],
@@ -151,7 +158,12 @@ function table(list) {
       <tbody>${list
         .map(
           (row) =>
-            `<tr>${COLUMNS.map(([, get]) => `<td>${esc(get(row) ?? "-")}</td>`).join("")}<td>${slaVerdict(row)}</td></tr>`,
+            `<tr>${COLUMNS.map(([, get, freeText]) => {
+              const value = String(get(row) ?? "-");
+              return freeText
+                ? `<td class="cell-text" title="${esc(value)}">${esc(value)}</td>`
+                : `<td>${esc(value)}</td>`;
+            }).join("")}<td>${slaVerdict(row)}</td></tr>`,
         )
         .join("")}</tbody>
     </table>
@@ -182,8 +194,6 @@ export function render(root) {
         <span>Sampai</span>
         <input class="input" type="date" id="to" value="${esc(range.to)}" max="${toDateInputValue()}" />
       </label>
-      <div></div>
-      <div></div>
       <div class="table-actions">
         <button type="button" class="btn btn-primary" id="apply-range">Terapkan</button>
       </div>
