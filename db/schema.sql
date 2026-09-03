@@ -133,6 +133,36 @@ create table if not exists superset_po_master (
   synced_at                      timestamptz not null default now()
 );
 
+/* ---------------------------------------------------------------------------
+ * Rincian PO per SKU.
+ *
+ * Chart Superset mengirim SATU BARIS PER PO x SKU, bukan satu baris per PO.
+ * Selama ini seluruhnya masuk ke `superset_po_master` dengan kunci
+ * `location_id|po_number`, sehingga baris kedua sebuah PO MENIMPA yang pertama
+ * lewat `on conflict do update`: yang tersimpan sebagai "total PO" sebenarnya
+ * angka satu SKU yang kebetulan datang terakhir. Diam, dan tidak terlihat dari
+ * layar mana pun — padahal `request_quantity` dan `count_sku` dari sana ikut
+ * menentukan target SLA tiket.
+ *
+ * Tabel ini menyimpan barisnya apa adanya. `superset_po_master` tetap ada dan
+ * tetap menjadi tempat layar membaca ringkasan PO, tetapi angkanya kini
+ * DITURUNKAN dari sini, bukan ditimpa baris terakhir.
+ * ------------------------------------------------------------------------- */
+create table if not exists superset_po_sku (
+  source_row_key   text primary key,
+  po_number        text not null,
+  location_id      text,
+  site_code        text,
+  sku_number       text not null,
+  product_name     text,
+  l1_category_name text,
+  company_name     text,
+  vendor_name      text,
+  request_quantity double precision not null default 0,
+  actual_quantity  double precision not null default 0,
+  synced_at        timestamptz not null default now()
+);
+
 create table if not exists sync_runs (
   run_id        uuid primary key default gen_random_uuid(),
   sync_name     text not null,
@@ -193,6 +223,36 @@ exception
   -- baris cacat jauh lebih buruk daripada satu kueri yang sedikit lebih lambat.
   when others then raise notice 'operational_date belum dapat dijadikan wajib: %', sqlerrm;
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- 3c. Kolom yang ditambahkan setelah tabelnya terbit
+--
+-- `create table if not exists` tidak menyentuh tabel yang sudah ada, jadi kolom
+-- baru harus dinyatakan terpisah. Semuanya `if not exists` supaya skema tetap
+-- idempoten — ia diterapkan ulang pada setiap start kontainer.
+-- ---------------------------------------------------------------------------
+
+-- Menandai PO yang diketik bebas oleh operator karena belum terbit di master.
+-- Tanpa penanda ini, PO manual tidak dapat dibedakan dari PO yang benar-benar
+-- tervalidasi begitu tiketnya tersimpan — dan justru PO manual yang jumlah dan
+-- vendornya tidak pernah diperiksa siapa pun.
+alter table ticket_pos add column if not exists is_manual boolean not null default false;
+
+-- Catatan non-fatal dari satu siklus sync. Dipakai untuk hal yang tidak
+-- menggagalkan sync tetapi membuat hasilnya tidak dapat dipercaya — mis. chart
+-- Superset yang mengirim beberapa baris untuk satu PO dengan angka yang saling
+-- berbeda, sehingga baris mana pun yang tersimpan pasti bukan totalnya.
+alter table sync_runs add column if not exists notes text;
+
+-- Nama perusahaan pemilik PO, dibawa baris SKU dari Superset. Berbeda dari
+-- `vendor_name`: satu perusahaan dapat mengirim lewat beberapa vendor.
+alter table superset_po_master add column if not exists company_name text;
+
+-- Jumlah SKU yang DIKIRIM chart, disimpan berdampingan dengan jumlah yang
+-- dihitung sendiri dari baris SKU. Keduanya seharusnya sama; ketika tidak,
+-- selisihnya adalah tanda bentuk chart berubah dan angka PO tidak lagi dapat
+-- dipercaya — lihat catatan sync di layar Pengaturan.
+alter table superset_po_master add column if not exists source_count_sku bigint;
 
 -- ---------------------------------------------------------------------------
 -- 4. Index untuk jalur kueri panas
@@ -465,7 +525,7 @@ returns jsonb language sql stable as $$
   -- Dirujuk empat kali di bawah sebagai subquery skalar; tanpa `materialized`
   -- setiap rujukan menjalankan kueri ini lagi.
   last_run as materialized (
-    select status, finished_at, written_count, error_message
+    select status, finished_at, written_count, error_message, notes
       from sync_runs where sync_name = 'superset'
       order by started_at desc limit 1
   )
@@ -481,7 +541,11 @@ returns jsonb language sql stable as $$
     'last_run_status', (select status from last_run),
     'last_run_at', (select finished_at from last_run),
     'last_run_rows', (select written_count from last_run),
-    'last_run_error', (select error_message from last_run)
+    'last_run_error', (select error_message from last_run),
+    -- Catatan non-fatal: sync yang BERHASIL tetapi hasilnya perlu dibaca dengan
+    -- hati-hati, mis. chart yang mengirim beberapa baris per PO dengan angka
+    -- berbeda, atau kolom sumber baru yang belum disimpan tabel mana pun.
+    'last_run_notes', (select notes from last_run)
   ) from master;
 $$;
 
@@ -714,6 +778,10 @@ declare
   v_site text; v_arrived timestamptz;
   v_operational_date date := (timezone('Asia/Jakarta', now()) - interval '4 hours')::date;
   v_seq integer; v_created jsonb := '[]'::jsonb; v_po_id text;
+  v_po_number text; v_is_manual boolean;
+  -- Fakta PO yang diambil dari master, bukan dari browser. Lihat catatan
+  -- panjang di dalam loop PO.
+  v_m_found boolean; v_m_vendor text; v_m_qty double precision; v_m_sku integer;
 begin
   if jsonb_array_length(v_items) < 1 then raise exception 'Minimal satu ticket wajib diisi.'; end if;
   if jsonb_array_length(v_items) > 50 then raise exception 'Maksimal 50 ticket per submit.'; end if;
@@ -764,25 +832,77 @@ begin
       coalesce(nullif(btrim(v_ticket->>'unload_sla'), ''), 'ON PROCESS'),
       coalesce(nullif(btrim(v_ticket->>'source'), ''), 'App'), v_arrived);
 
+    /* ----------------------------------------------------------------------
+     * PO tiket: ANGKANYA DIBACA DARI MASTER, TIDAK PERNAH DARI BROWSER.
+     *
+     * Bentuk sebelumnya hanya memastikan nomor PO-nya ADA di master, lalu
+     * menyimpan `request_quantity`, `count_sku`, dan `vendor_name` persis
+     * seperti yang dikirim klien. Keduanya adalah hal yang berbeda, dan
+     * selisihnya adalah seluruh nilai pemeriksaan ini: siapa pun yang memegang
+     * token sesi — termasuk tab browser yang disunting lewat DevTools — dapat
+     * memanggil `create_ticket` dengan PO yang sah dan `request_quantity`
+     * 999.999. Servernya memeriksa nomornya, meloloskan angkanya, dan angka
+     * itulah yang kemudian mengalir ke papan, ke laporan, ke Google Sheet, dan
+     * ke penilaian SLA — karena `count_sku` ikut menentukan target SLA lewat
+     * inbound_sla_target_hours(). Tidak ada satu pun layar yang dapat
+     * memperlihatkan bahwa angkanya tidak pernah berasal dari Superset.
+     *
+     * Sekarang baris masternya dibaca sekali di sini, dan nilainya yang
+     * dipakai. Muatan dari browser tinggal berisi nomor PO — yaitu satu-satunya
+     * hal yang memang diputuskan operator.
+     *
+     * Pencarian juga DILINGKUPI GUDANG TIKET INI. Sebelumnya syaratnya hanya
+     * "ada di salah satu gudang aktif", sehingga tiket Pegangsaan dapat
+     * mengangkut PO milik Srengseng — dan karena vendor serta jumlahnya ikut
+     * dari sana, tidak ada yang terlihat janggal sesudahnya.
+     * ------------------------------------------------------------------- */
     for v_po in select value from jsonb_array_elements(v_item->'pos')
     loop
-      if nullif(btrim(v_po->>'po_number'), '') is null then raise exception 'po_number wajib diisi.'; end if;
-      if coalesce((v_po->>'is_manual')::boolean, false) = false and not exists(
-        select 1 from superset_po_master m
-          join site_master s on s.location_id = m.location_id and s.active
-         where m.po_number = btrim(v_po->>'po_number')) then
-        raise exception 'PO % tidak ditemukan di master gudang aktif. Pilih opsi PO manual.', btrim(v_po->>'po_number');
+      v_po_number := nullif(btrim(coalesce(v_po->>'po_number', '')), '');
+      if v_po_number is null then raise exception 'po_number wajib diisi.'; end if;
+      v_is_manual := coalesce((v_po->>'is_manual')::boolean, false);
+
+      select true, m.vendor_name, m.request_quantity, m.count_sku
+        into v_m_found, v_m_vendor, v_m_qty, v_m_sku
+        from superset_po_master m
+        join site_master s on s.location_id = m.location_id and s.active
+       where s.site_code = v_site
+         and upper(m.po_number) = upper(v_po_number)
+       limit 1;
+      v_m_found := coalesce(v_m_found, false);
+
+      if not v_is_manual and not v_m_found then
+        raise exception 'PO % tidak ada di master gudang %. Pilih opsi PO manual bila memang belum terbit.',
+          v_po_number, v_site;
       end if;
+
+      -- PO manual memang tidak punya baris master, jadi angkanya nol dan
+      -- ditandai. Tanpa penanda itu, PO yang diketik bebas tidak dapat
+      -- dibedakan dari PO yang benar-benar tervalidasi ketika dibaca kembali.
       v_po_id := coalesce(nullif(btrim(v_po->>'ticket_po_id'), ''), gen_random_uuid()::text);
       insert into ticket_pos(ticket_po_id, ticket_id, po_number, vendor_name,
-        request_quantity, actual_quantity, count_sku, checker_status)
-      values(v_po_id, v_ticket_id, btrim(v_po->>'po_number'),
-        coalesce(nullif(btrim(v_po->>'vendor_name'), ''), nullif(btrim(v_ticket->>'vendor_name'), '')),
-        coalesce((v_po->>'request_quantity')::double precision, 0),
-        coalesce((v_po->>'actual_quantity')::double precision, 0),
-        coalesce((v_po->>'count_sku')::integer, 0),
-        coalesce(nullif(btrim(v_po->>'checker_status'), ''), 'PENDING'));
+        request_quantity, actual_quantity, count_sku, checker_status, is_manual)
+      values(v_po_id, v_ticket_id, v_po_number,
+        case when v_m_found then v_m_vendor else nullif(btrim(v_ticket->>'vendor_name'), '') end,
+        case when v_m_found then coalesce(v_m_qty, 0) else 0 end,
+        -- Jumlah aktual selalu mulai nol: ia diisi checker saat bongkar, dan
+        -- pendaftar di pos masuk belum melihat satu koli pun.
+        0,
+        case when v_m_found then coalesce(v_m_sku, 0) else 0 end,
+        'PENDING', not v_m_found);
     end loop;
+
+    -- Vendor tiket mengikuti vendor PO-nya bila PO itu berasal dari master.
+    -- Nama vendor yang diketik bebas di samping PO yang tervalidasi adalah
+    -- persis yang membuat kinerja per vendor tidak dapat dijumlahkan: satu
+    -- vendor muncul sebagai tiga ejaan berbeda di laporan yang sama.
+    update tickets t
+       set vendor_name = coalesce(
+             (select p.vendor_name from ticket_pos p
+               where p.ticket_id = v_ticket_id and not p.is_manual and p.vendor_name is not null
+               order by p.created_at limit 1),
+             t.vendor_name)
+     where t.ticket_id = v_ticket_id;
 
     perform inbound_requeue_gsheet(array[v_ticket_id]);
     insert into ticket_events(ticket_id, event_type, actor_role, actor_name, payload_json)

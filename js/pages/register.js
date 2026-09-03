@@ -139,6 +139,43 @@ function suggestionMarkup() {
   return `<p class="section-note">Tidak ada PO cocok di master gudang aktif. Pakai PO manual bila memang belum terbit.</p>`;
 }
 
+/**
+ * Vendor: DIBACA dari PO, bukan diketik — selama ada satu PO master terpilih.
+ *
+ * Server memang sudah menimpanya dengan vendor milik master saat tiket dibuat,
+ * jadi kotak yang dapat diketik di sini hanya menawarkan pekerjaan yang
+ * hasilnya dibuang: operator mengetik satu nama, tiketnya tersimpan dengan nama
+ * lain, dan tidak ada yang menjelaskan mengapa. Menampilkannya sebagai fakta
+ * turunan membuat layar dan basis data mengatakan hal yang sama.
+ *
+ * Kotaknya kembali dapat diketik hanya ketika seluruh PO-nya manual — di situ
+ * memang tidak ada master yang dapat menjawab, dan nama vendor yang diketik
+ * operator adalah satu-satunya yang ada.
+ */
+function vendorField() {
+  const fromMaster = form.pos.find((po) => !po.is_manual && po.vendor_name);
+
+  if (fromMaster) {
+    return `<label>
+      <span>Vendor</span>
+      <input class="input" id="vendor" value="${esc(fromMaster.vendor_name)}" readonly
+             aria-describedby="vendor-note" />
+      <small id="vendor-note">Mengikuti master PO ${esc(fromMaster.po_number)}. Tidak diketik manual.</small>
+    </label>`;
+  }
+
+  return `<label>
+    <span>Vendor</span>
+    <input class="input" id="vendor" placeholder="Nama vendor"
+           value="${esc(form.vendor)}" autocomplete="off" />
+    <small>${
+      form.pos.length
+        ? "Seluruh PO dipilih manual, jadi nama vendor tidak dapat diambil dari master."
+        : "Terisi sendiri begitu PO dipilih."
+    }</small>
+  </label>`;
+}
+
 function poPicker() {
   return `<div class="po-picker">
     ${
@@ -222,11 +259,7 @@ export function render(root) {
                 </select>
               </label>
 
-              <label>
-                <span>Vendor</span>
-                <input class="input" id="vendor" placeholder="Nama vendor"
-                       value="${esc(form.vendor)}" autocomplete="off" />
-              </label>
+              ${vendorField()}
             </div>`,
           })}
 
@@ -465,6 +498,11 @@ function bindSuggestions(root) {
       const poNumber = button.dataset.addPo;
       // Baris master datang bersama hasil pencarian, jadi tidak perlu dicari
       // ulang di salinan lokal yang kini sudah tidak ada.
+      //
+      // Angkanya disimpan HANYA untuk ditampilkan di layar. Yang dikirim saat
+      // submit tinggal nomor PO-nya: server membaca ulang vendor, jumlah, dan
+      // SKU dari master gudang itu sendiri, sehingga angka yang tercatat tidak
+      // pernah bergantung pada apa yang kebetulan ada di memori tablet.
       const master = suggestions.find((po) => po.po_number === poNumber);
       form.pos.push({
         po_number: poNumber,
@@ -513,7 +551,11 @@ async function submit(root, button) {
           driver_name: form.driverName.trim(),
           driver_phone: form.driverPhone.trim(),
           ticket_type: form.ticketType,
-          pos: form.pos,
+          // Hanya nomor PO dan penandanya yang diseberangkan. Vendor, jumlah,
+          // dan SKU dibaca server dari master gudangnya sendiri — mengirimnya
+          // dari sini berarti menawarkan angka yang dapat disunting siapa pun
+          // yang membuka DevTools, pada nilai yang ikut menentukan target SLA.
+          pos: form.pos.map((po) => ({ po_number: po.po_number, is_manual: Boolean(po.is_manual) })),
         }),
       );
       toast(`Tiket ${created?.queue_no || ""} tersimpan.`);

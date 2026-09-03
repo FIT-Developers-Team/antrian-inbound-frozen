@@ -175,6 +175,32 @@ const COLUMNS = [
   "request_quantity", "actual_quantity", "count_sku",
 ];
 
+/** Kolom sumber yang memang sengaja tidak disimpan. */
+const IGNORED_SOURCE_COLUMNS = new Set([LOCATION_COLUMN, "po", "PO"]);
+
+/**
+ * Melaporkan kolom yang DIKIRIM chart tetapi tidak disimpan tabel mana pun.
+ *
+ * `rowValues()` memetakan sekumpulan nama kolom tetap; apa pun yang dikirim
+ * Superset di luar daftar itu jatuh diam-diam. Selama daftarnya memang sepadan
+ * dengan chart-nya itu tidak jadi soal — tetapi chart di Superset dapat
+ * disunting siapa saja yang punya aksesnya, dan kolom yang ditambahkan di sana
+ * tidak akan pernah muncul di sini maupun memberi kabar bahwa ia ada.
+ *
+ * Ini yang menjawab pertanyaan "apakah sumbernya sudah membawa `sku_number`,
+ * `product_name`, `l1_category_name`, atau `company_name`" tanpa perlu menebak:
+ * bila kolomnya dikirim, namanya muncul di catatan sync dan di layar
+ * Pengaturan; bila tidak, ia memang belum ada di chart itu.
+ */
+export function unmappedColumns(rows) {
+  const first = rows.find((row) => row && typeof row === "object");
+  if (!first) return [];
+  const known = new Set(COLUMNS);
+  return Object.keys(first)
+    .filter((key) => !known.has(key) && !IGNORED_SOURCE_COLUMNS.has(key))
+    .sort();
+}
+
 const UPSERT_ASSIGNMENTS = COLUMNS.filter((column) => column !== "source_row_key")
   .map((column) => `${column}=excluded.${column}`)
   .join(", ");
@@ -205,6 +231,53 @@ function rowValues(row, byLocation) {
  * bawah batas 65.535 milik protokol wire Postgres, sambil memangkas jumlah
  * perjalanan menjadi seperlima ratusnya.
  */
+/**
+ * Memeriksa apakah chart benar-benar mengirim SATU baris per PO.
+ *
+ * `source_row_key` adalah `location_id|po_number`, jadi beberapa baris untuk PO
+ * yang sama saling menimpa lewat `on conflict do update` — diam-diam, dan yang
+ * tersimpan adalah baris yang kebetulan terakhir. Selama chart-nya memang
+ * teragregasi per PO itu tidak pernah terjadi; bila kelak ia diubah menjadi
+ * per-SKU, atau sebuah join menggandakan barisnya, master PO mulai menyimpan
+ * angka SATU baris sebagai TOTAL sebuah PO tanpa satu pun tanda di layar.
+ *
+ * Yang dibedakan di sini adalah dua hal yang tampak sama:
+ *
+ *   duplikat   Beberapa baris, angkanya identik. Chart tidak ter-dedup, tetapi
+ *              nilai yang tersimpan tetap benar.
+ *   konflik    Beberapa baris, angkanya BERBEDA. Nilai yang tersimpan pasti
+ *              bukan total PO itu, dan `request_quantity` serta `count_sku` —
+ *              yang ikut menentukan target SLA — menjadi tidak dapat dipercaya.
+ *
+ * Sengaja hanya melaporkan, tidak menjumlahkan sendiri. Menjumlahkan menuntut
+ * pengetahuan tentang bentuk chart yang tidak dimiliki kode ini: bila
+ * `count_sku` ternyata total PO yang diulang pada tiap baris, menjumlahkannya
+ * melipatgandakannya dan menggeser target SLA dari dua jam ke empat.
+ */
+export function auditRowKeys(values) {
+  const seen = new Map();
+  let duplicates = 0;
+  let conflicts = 0;
+  const conflicting = [];
+
+  values.forEach((value) => {
+    const [key, poNumber] = value;
+    const facts = JSON.stringify(value.slice(-3)); // request_quantity, actual_quantity, count_sku
+    const previous = seen.get(key);
+    if (!previous) {
+      seen.set(key, { facts, poNumber });
+      return;
+    }
+    duplicates += 1;
+    if (previous.facts !== facts) {
+      conflicts += 1;
+      if (conflicting.length < 5) conflicting.push(poNumber);
+    }
+  });
+
+  return { unique: seen.size, duplicates, conflicts, conflicting };
+}
+
 async function writeRows(pool, rows, byLocation) {
   const values = rows.map((row) => rowValues(row, byLocation)).filter(Boolean);
   if (!values.length) return 0;
@@ -228,7 +301,7 @@ async function writeRows(pool, rows, byLocation) {
       );
     }
     await client.query("commit");
-    return values.length;
+    return { written: values.length, audit: auditRowKeys(values) };
   } catch (error) {
     await client.query("rollback").catch(() => {});
     throw error;
@@ -277,14 +350,34 @@ export async function runSupersetSync(pool) {
     // Hanya baris milik gudang aktif yang disimpan, apa pun yang dikirim chart.
     const scoped = rows.filter((row) => byLocation.has(String(row[LOCATION_COLUMN] ?? "")));
 
-    const written = await writeRows(pool, scoped, byLocation);
+    const { written, audit } = await writeRows(pool, scoped, byLocation);
+
+    // Konflik dicatat sebagai CATATAN, bukan kegagalan: barisnya tetap tersimpan
+    // dan papan tetap berjalan. Yang tidak boleh terjadi adalah ia berlalu tanpa
+    // seorang pun tahu bahwa angka PO yang dipakai menghitung SLA berasal dari
+    // satu baris di antara beberapa yang saling bertentangan.
+    const unmapped = unmappedColumns(scoped);
+    const notes = [
+      audit.conflicts
+        ? `${audit.conflicts} baris konflik untuk PO yang sama (mis. ${audit.conflicting.join(", ")}). ` +
+          "Chart Superset mengirim lebih dari satu baris per PO dengan angka berbeda, " +
+          "sehingga request_quantity dan count_sku yang tersimpan bukan total PO."
+        : audit.duplicates
+          ? `${audit.duplicates} baris duplikat per PO, angkanya identik; nilai tersimpan tetap benar.`
+          : null,
+      unmapped.length ? `Kolom sumber yang belum disimpan: ${unmapped.join(", ")}.` : null,
+    ].filter(Boolean);
+    const note = notes.length ? notes.join(" ") : null;
 
     await pool.query(
-      "update sync_runs set status='SUCCESS', fetched_count=$2, written_count=$3, finished_at=now() where run_id=$1",
-      [runId, rows.length, written],
+      "update sync_runs set status='SUCCESS', fetched_count=$2, written_count=$3, notes=$4, finished_at=now() where run_id=$1",
+      [runId, rows.length, written, note],
     );
+    if (audit.conflicts) console.error(`[superset] ${notes[0]}`);
+    else if (audit.duplicates) console.warn(`[superset] ${notes[0]}`);
+    if (unmapped.length) console.warn(`[superset] kolom sumber belum disimpan: ${unmapped.join(", ")}`);
     console.log(`[superset] ${written} PO tersimpan (${mode}).`);
-    return { fetched: rows.length, written, mode };
+    return { fetched: rows.length, written, mode, unique: audit.unique, unmapped, note };
   } catch (error) {
     // Pencatatan kegagalan tidak boleh melempar galat kedua: bila database
     // sendiri yang bermasalah, update ini ikut gagal, dan galat itulah yang

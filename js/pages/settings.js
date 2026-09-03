@@ -89,6 +89,19 @@ function sourceSection() {
           ? `<p class="field-error" style="margin-top:12px">${esc(source.last_run_error)}</p>`
           : ""
       }
+      ${
+        // Sync yang BERHASIL tetapi hasilnya perlu dibaca dengan hati-hati.
+        // Kegagalan sudah punya tempatnya sendiri di atas; ini justru untuk hal
+        // yang tidak menggagalkan apa pun dan karena itu paling mudah terlewat:
+        // chart yang mengirim beberapa baris per PO dengan angka berbeda, atau
+        // kolom sumber baru yang belum disimpan tabel mana pun.
+        source.last_run_notes
+          ? `<div class="banner banner-warn" role="status" style="margin-top:12px">
+               <strong>${icon("alert", 16)} Catatan sinkronisasi terakhir</strong>
+               <p>${esc(source.last_run_notes)}</p>
+             </div>`
+          : ""
+      }
       <p class="section-note">
         Penjadwal di dalam proses API menarik ulang master PO tiap lima menit.
         ${
