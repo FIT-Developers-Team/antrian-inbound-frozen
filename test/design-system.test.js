@@ -226,7 +226,7 @@ test("hanya ada satu berkas gaya dan ukurannya wajar", () => {
 test("kelas khusus domain tidak mengotori primitif bersama", () => {
   // Hitung mundur dan kartu antrean adalah tambahan milik aplikasi ini; ia
   // harus berdiri sebagai kelas sendiri, bukan menimpa primitif hub.
-  [".sla", ".sla-hero", ".queue-card", ".plate-input", ".fleet-option"].forEach((selector) => {
+  [".sla", ".sla-hero", ".queue-card", ".plate-input", ".po-row"].forEach((selector) => {
     assert.ok(css.includes(`${selector} {`), `kelas domain ${selector} harus ada`);
   });
 });

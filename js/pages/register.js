@@ -8,9 +8,9 @@
 
 import * as api from "../api.js";
 import * as store from "../store.js";
-import { DEFAULT_FLEET, FLEET_TYPES, currentSite } from "../config.js";
-import { esc, isValidPlate, normalizePlate, toLocalInputValue } from "../format.js";
-import { chip, debounce, emptyState, icon, pageHeader, section, toast, withBusy } from "../ui.js";
+import { DEFAULT_FLEET, FLEET_TYPES, SKU_TIERED_FLEETS, currentSite } from "../config.js";
+import { esc, isValidPlate, normalizePlate, num, toLocalInputValue } from "../format.js";
+import { badge, debounce, icon, pageHeader, section, toast, withBusy } from "../ui.js";
 
 /** Isian yang bertahan antar render, sehingga daftar PO tidak hilang saat mengetik. */
 const form = {
@@ -43,32 +43,39 @@ function resetForm() {
  * Bagian formulir
  * ----------------------------------------------------------------------- */
 /**
- * Pemilih armada.
+ * Pemilih armada — satu daftar pilihan.
  *
- * Menyandang `role="radiogroup"` sejak awal, tetapi tidak pernah berperilaku
- * seperti radiogroup: setiap tombol dapat ditab satu per satu, dan tombol panah
- * tidak melakukan apa-apa. Bagi pemakai pembaca layar itu lebih buruk daripada
- * tidak memberi peran sama sekali — mereka diberi tahu ada dua belas pilihan
- * yang dapat dijelajahi dengan panah, lalu panahnya diam.
+ * Sebelumnya dua belas tombol dalam grid. Di ponsel itu enam baris penuh, yaitu
+ * bagian TERBESAR layar pendaftaran, untuk satu nilai yang pada kebanyakan
+ * shift tidak pernah bergeser dari bawaannya. Grid itu juga menyandang peran
+ * grup radio tanpa pernah berperilaku seperti grup radio, sampai navigasi
+ * panahnya ditambahkan belakangan.
  *
- * `tabindex` berpindah mengikuti pilihan (roving tabindex): satu Tab masuk ke
- * grup, panah berpindah di dalamnya, satu Tab lagi keluar. Itulah pola yang
- * dijanjikan perannya.
+ * `<select>` membawa semuanya tanpa satu baris kode: keyboard, pencarian
+ * ketik-huruf, dan gulungan asli perangkat — yang di tablet gudang justru lebih
+ * mudah disentuh bersarung tangan daripada dua belas target kecil.
+ *
+ * Keterangan di bawahnya mengikuti pilihan, sehingga catatan armada dan tier
+ * SLA-nya tetap terbaca tanpa membuka layar Pengaturan.
  */
 function fleetPicker() {
-  return `<div class="fleet-grid" role="radiogroup" aria-label="Tipe armada" id="fleet-grid">
-    ${FLEET_TYPES.map((fleet) => {
-      const active = form.fleet === fleet.value;
-      return `<button type="button" role="radio"
-        aria-checked="${active}"
-        tabindex="${active ? "0" : "-1"}"
-        class="fleet-option${active ? " active" : ""}"
-        data-fleet="${esc(fleet.value)}">
-        <strong>${esc(fleet.label)}</strong>
-        <small>SLA ${esc(fleet.slaHours)} jam</small>
-      </button>`;
-    }).join("")}
-  </div>`;
+  const selected = FLEET_TYPES.find((fleet) => fleet.value === form.fleet);
+  return `<label>
+    <span>Tipe armada</span>
+    <select class="input" id="fleet-select">
+      ${FLEET_TYPES.map(
+        (fleet) =>
+          `<option value="${esc(fleet.value)}"${fleet.value === form.fleet ? " selected" : ""}>
+             ${esc(fleet.label)} — SLA ${esc(fleet.slaHours)} jam
+           </option>`,
+      ).join("")}
+    </select>
+    <small>${selected ? esc(selected.note) : ""}${
+      selected && SKU_TIERED_FLEETS.includes(selected.value)
+        ? " · target naik ke 4 jam di atas 40 SKU"
+        : ""
+    }</small>
+  </label>`;
 }
 
 /**
@@ -108,9 +115,6 @@ function plateInput() {
 let suggestions = [];
 let searchToken = 0;
 let searching = false;
-
-/** Delapan saran teratas; lebih dari itu tidak muat di layar tablet. */
-const MAX_SUGGESTIONS = 8;
 
 /**
  * Isi kotak saran saja.
@@ -176,20 +180,58 @@ function vendorField() {
   </label>`;
 }
 
+/**
+ * PO terpilih, dengan angkanya ikut terlihat.
+ *
+ * Sebelumnya PO yang sudah dipilih menyusut menjadi chip berisi nomornya saja.
+ * Vendor, jumlah SKU, dan qty memang sempat tampil — tetapi hanya di daftar
+ * saran, yaitu tepat SEBELUM operator memilih, lalu hilang begitu ia memilih.
+ * Justru sesudah memilih itulah angkanya perlu dibaca: itu satu-satunya
+ * kesempatan mencocokkan apa yang tertera di surat jalan dengan apa yang ada di
+ * master sebelum tiketnya tersimpan.
+ *
+ * Totalnya dijumlahkan di baris terakhir karena satu truk kerap membawa
+ * beberapa PO, dan yang dicocokkan dengan muatan adalah jumlah keseluruhannya.
+ */
+function poList() {
+  if (!form.pos.length) {
+    return `<p class="section-note">Belum ada PO dipilih. Minimal satu PO wajib diisi.</p>`;
+  }
+
+  const totalSku = form.pos.reduce((sum, po) => sum + (Number(po.count_sku) || 0), 0);
+  const totalQty = form.pos.reduce((sum, po) => sum + (Number(po.request_quantity) || 0), 0);
+
+  const rows = form.pos
+    .map(
+      (po) => `<li class="po-row${po.is_manual ? " is-manual" : ""}">
+        <div class="po-row-head">
+          <strong class="mono">${esc(po.po_number)}</strong>
+          ${po.is_manual ? badge("Manual", "warning") : ""}
+          <button type="button" class="po-row-remove" data-remove-po="${esc(po.po_number)}"
+                  aria-label="Hapus ${esc(po.po_number)}">${icon("x", 15)}</button>
+        </div>
+        <p class="po-row-vendor">${esc(
+          po.is_manual ? "PO manual — belum ada data master" : po.vendor_name || "Vendor tidak tercatat",
+        )}</p>
+        <div class="po-row-facts">
+          <span><i>SKU</i><b class="mono">${esc(po.is_manual ? "-" : num(po.count_sku))}</b></span>
+          <span><i>Qty</i><b class="mono">${esc(po.is_manual ? "-" : num(po.request_quantity))}</b></span>
+        </div>
+      </li>`,
+    )
+    .join("");
+
+  return `<ul class="po-list">${rows}</ul>
+    <p class="po-total">
+      <span>${form.pos.length} PO</span>
+      <span><i>SKU</i> <b class="mono">${esc(num(totalSku))}</b></span>
+      <span><i>Qty</i> <b class="mono">${esc(num(totalQty))}</b></span>
+    </p>`;
+}
+
 function poPicker() {
   return `<div class="po-picker">
-    ${
-      form.pos.length
-        ? `<div class="po-chips">${form.pos
-            .map(
-              (po) => `<span class="po-chip">${esc(po.po_number)}
-                ${po.is_manual ? '<em style="font-style:normal;opacity:.7">manual</em>' : ""}
-                <button type="button" data-remove-po="${esc(po.po_number)}" aria-label="Hapus ${esc(po.po_number)}">&times;</button>
-              </span>`,
-            )
-            .join("")}</div>`
-        : `<p class="section-note">Belum ada PO dipilih. Minimal satu PO wajib diisi.</p>`
-    }
+    ${poList()}
 
     <label>
       <span>Cari PO</span>
@@ -201,8 +243,12 @@ function poPicker() {
 
     <label>
       <span>PO manual</span>
-      <div style="display:flex;gap:8px">
-        <input class="input" id="manual-po" placeholder="PO di luar master Superset"
+      <!-- Kotak dan tombolnya membungkus ketika kolomnya sempit. Sebagai satu
+           baris fleks yang dipaksa, kotaknya tergencet sampai placeholder-nya
+           terpotong di tengah kata dan nomor PO yang sedang diketik tidak
+           terlihat utuh. -->
+      <div class="inline-field">
+        <input class="input" id="manual-po" placeholder="Nomor PO di luar master"
                value="${esc(form.manualPo)}" autocomplete="off" />
         <button type="button" class="btn" id="add-manual-po">${icon("plus", 16)} Tambah</button>
       </div>
@@ -241,10 +287,7 @@ export function render(root) {
                 <small>Jam truk tiba di pos, bukan jam formulir ini diisi. Lama tunggu driver dihitung dari sini.</small>
               </label>
 
-              <div class="span-2">
-                <label><span>Tipe armada</span></label>
-                ${fleetPicker()}
-              </div>
+              <div class="span-2">${fleetPicker()}</div>
 
               <div class="span-2">
                 <label for="plate-prefix"><span>Plat nomor</span></label>
@@ -263,29 +306,28 @@ export function render(root) {
             </div>`,
           })}
 
-        </div>
-
-        <!--
-          Urutan langkah mengikuti URUTAN BACA, bukan urutan berkas.
-
-          Sebelumnya "Langkah 3 · Driver" berada di kolom kiri dan "Langkah 2 ·
-          Purchase order" di kolom kanan. Di desktop mata membaca satu kolom
-          sampai habis lalu pindah ke kolom berikutnya, jadi yang terbaca adalah
-          1, 3, lalu 2; di ponsel kedua kolom bertumpuk dan urutannya menjadi
-          persis sama salahnya. Penomoran yang menyalahi urutannya sendiri lebih
-          buruk daripada tidak menomori sama sekali — ia memberi tahu operator
-          pos masuk bahwa ia melewatkan sesuatu, setiap kali.
-
-          Driver karena itu pindah ke bawah Purchase order. Kedua kolom kini
-          terbaca 1 → 2 → 3 dalam kedua tata letak.
-        -->
-        <div class="dashboard-page">
           ${section({
             eyebrow: "Langkah 2",
             title: "Purchase order",
             body: poPicker(),
           })}
+        </div>
 
+        <!--
+          Urutan langkah mengikuti URUTAN BACA, bukan urutan berkas.
+
+          Di desktop mata membaca satu kolom sampai habis lalu pindah ke kolom
+          berikutnya; di ponsel kedua kolom bertumpuk. Kolom kiri karena itu
+          memuat langkah 1 dan 2, kolom kanan langkah 3 dan tombol simpannya —
+          terbaca 1 → 2 → 3 dalam kedua tata letak.
+
+          Pembagiannya juga mengikuti BOBOT isinya. Ketika pemilih armada masih
+          berupa grid dua belas tombol, langkah 1 sendirian mengisi kolom kiri;
+          setelah ia menjadi satu daftar pilihan, kolomnya tinggal separuh
+          terisi sementara kolom kanan meluber. Daftar PO tumbuh seiring PO
+          ditambahkan, jadi ia yang sekarang menemani langkah 1 di kolom lebar.
+        -->
+        <div class="dashboard-page">
           ${section({
             eyebrow: "Langkah 3",
             title: "Driver",
@@ -330,31 +372,16 @@ export function render(root) {
 function bindEvents(root) {
   const rerender = () => render(root);
 
-  const fleetButtons = [...root.querySelectorAll("[data-fleet]")];
-  fleetButtons.forEach((button, index) => {
-    button.addEventListener("click", () => {
-      form.fleet = button.dataset.fleet;
-      rerender();
-    });
-
-    button.addEventListener("keydown", (event) => {
-      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
-      if (step === undefined && event.key !== "Home" && event.key !== "End") return;
-      event.preventDefault();
-
-      const next =
-        event.key === "Home"
-          ? 0
-          : event.key === "End"
-            ? fleetButtons.length - 1
-            : // Melingkar: dari pilihan terakhir, panah kanan kembali ke awal.
-              (index + step + fleetButtons.length) % fleetButtons.length;
-
-      form.fleet = fleetButtons[next].dataset.fleet;
-      rerender();
-      // Fokus mengikuti pilihan, sesuai perilaku radiogroup yang sebenarnya.
-      root.querySelector(`[data-fleet="${CSS.escape(form.fleet)}"]`)?.focus();
-    });
+  // Armada adalah daftar pilihan biasa. Sebelumnya ia dua belas tombol yang
+  // memenuhi enam baris di ponsel — bagian terbesar layar pendaftaran, untuk
+  // satu nilai yang jarang berubah dari bawaannya. Daftar pilihan juga membawa
+  // keyboard, pencarian ketik-huruf, dan gulungan asli perangkat tanpa satu
+  // baris kode pun.
+  root.querySelector("#fleet-select")?.addEventListener("change", (event) => {
+    form.fleet = event.target.value;
+    // Digambar ulang supaya keterangan di bawahnya mengikuti armada terpilih.
+    rerender();
+    root.querySelector("#fleet-select")?.focus();
   });
 
   // Plat: pindah fokus otomatis begitu satu kotak penuh, supaya operator tidak

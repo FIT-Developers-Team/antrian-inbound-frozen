@@ -1604,87 +1604,157 @@ select.input {
   letter-spacing: 0.12em;
 }
 
-.fleet-grid {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
-}
-
-.fleet-option {
-  display: grid;
-  gap: 3px;
-  padding: 11px 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--surface);
-  cursor: pointer;
-  text-align: left;
-}
-
-.fleet-option:hover {
-  border-color: var(--accent);
-}
-
-.fleet-option.active {
-  border-color: var(--accent);
-  background: var(--surface-accent);
-}
-
-.fleet-option strong {
-  font-size: 13px;
-}
-
-.fleet-option small {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-
-.fleet-option.active small {
-  color: var(--accent);
-}
-
-/* Daftar PO terpilih pada form pendaftaran. */
+/* Daftar PO terpilih pada form pendaftaran.
+ *
+ * Bentuk sebelumnya chip berisi nomor PO saja. Vendor, jumlah SKU, dan qty
+ * hanya tampil di daftar saran — tepat SEBELUM operator memilih — lalu hilang
+ * begitu ia memilih, padahal justru sesudah memilih itulah angkanya perlu
+ * dicocokkan dengan surat jalan. */
 .po-picker {
   display: grid;
+  gap: 10px;
+}
+
+.po-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.po-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in oklab, var(--accent) 32%, var(--line));
+  border-radius: 11px;
+  background: color-mix(in oklab, var(--accent) 5%, var(--surface));
+}
+
+/* PO manual tidak punya baris master, jadi ia sengaja TIDAK memakai nada aksen
+   yang sama: angka nol di sebelah PO tervalidasi terbaca sebagai "kosong",
+   bukan sebagai "belum diperiksa siapa pun". */
+.po-row.is-manual {
+  border-color: color-mix(in oklab, var(--status-warning) 38%, var(--line));
+  background: color-mix(in oklab, var(--status-warning) 6%, var(--surface));
+}
+
+.po-row-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
   gap: 8px;
 }
 
-.po-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.po-row-head strong {
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.po-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border: 1px solid color-mix(in oklab, var(--accent) 40%, var(--line));
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--accent) 8%, var(--surface));
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.po-chip button {
+.po-row-remove {
   display: grid;
-  width: 18px;
-  height: 18px;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  flex: 0 0 auto;
   border: 0;
-  border-radius: 999px;
+  border-radius: 8px;
   background: transparent;
-  color: inherit;
+  color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
   place-items: center;
 }
 
-.po-chip button:hover {
-  background: color-mix(in oklab, var(--accent) 18%, transparent);
+.po-row-remove:hover {
+  background: color-mix(in oklab, var(--status-critical) 12%, transparent);
+  color: var(--status-critical);
+}
+
+.po-row-remove svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+.po-row-vendor {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Angka PO. `i` adalah labelnya, `b` nilainya — keduanya sengaja pendek supaya
+   dua fakta muat berdampingan pada kartu selebar kolom kanan. */
+.po-row-facts,
+.po-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin: 0;
+}
+
+.po-row-facts span,
+.po-total span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.po-row-facts i,
+.po-total i {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.po-row-facts b,
+.po-total b {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Total seluruh PO pada satu tiket: itulah angka yang benar-benar dicocokkan
+   dengan muatan truk, karena satu truk kerap membawa beberapa PO. */
+.po-total {
+  padding-top: 8px;
+  border-top: 1px dashed var(--line-strong);
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.po-total > span:first-child {
+  font-weight: 600;
+}
+
+/* Kotak input dengan tombol di sampingnya. Keduanya membungkus ketika kolomnya
+   sempit: dipaksa satu baris, kotaknya tergencet sampai isinya terpotong. */
+.inline-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inline-field .input {
+  min-width: 140px;
+  flex: 1 1 160px;
+}
+
+.inline-field .btn {
+  flex: 0 0 auto;
 }
 
 .po-suggestions {
@@ -2683,8 +2753,7 @@ select.input {
 
 .btn,
 .nav-link,
-.input,
-.fleet-option {
+.input {
   min-height: var(--control-h);
 }
 
@@ -2710,20 +2779,11 @@ select.input {
   min-height: var(--control-h);
 }
 
-/* Tombol hapus pada chip PO. Ia yang paling kecil di seluruh aplikasi dan
-   paling sering meleset: satu ketukan salah menghapus PO yang benar. */
-.po-chip button {
-  display: inline-grid;
-  place-items: center;
-  min-width: 26px;
-  min-height: 26px;
-}
-
-@media (pointer: coarse) {
-  .po-chip button {
-    min-width: 34px;
-    min-height: 34px;
-  }
+/* Tombol hapus PO. Ia salah satu yang paling sering meleset, dan satu ketukan
+   salah menghapus PO yang benar — jadi lebarnya mengikuti skala kontrol, bukan
+   ukuran ikonnya. */
+.po-row-remove {
+  min-width: var(--control-h-sm);
 }
 
 /* --------------------------------------------------------------------------

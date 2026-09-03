@@ -61,8 +61,12 @@ test("waktu tunggu driver dihitung dari kedatangan, bukan jam input data", () =>
 test("tipe armada dipilih dari daftar tertutup, bukan diketik bebas", async () => {
   const { FLEET_TYPES } = await importModule("js/config.js");
   assert.ok(FLEET_TYPES.length >= 10, "daftar armada harus lengkap");
-  assert.match(register, /role="radiogroup"/, "pemilih armada harus terbaca sebagai grup radio");
-  assert.match(register, /data-fleet="\$\{esc\(fleet\.value\)\}"/);
+  // Daftar tertutup, kini sebagai <select>: dua belas tombol dalam grid memakan
+  // enam baris penuh di ponsel untuk satu nilai yang jarang bergeser dari
+  // bawaannya, dan `<select>` membawa keyboard serta gulungan asli perangkat
+  // tanpa satu baris kode pun.
+  assert.match(register, /<select class="input" id="fleet-select">/);
+  assert.match(register, /value="\$\{esc\(fleet\.value\)\}"/);
   assert.match(register, /fleet_type: form\.fleet/, "armada terkirim saat menyimpan tiket");
 });
 

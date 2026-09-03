@@ -168,7 +168,7 @@ test("ukuran kontrol memakai satu skala, bukan empat angka yang tidak sengaja", 
   // sebelahnya karena itu tingginya tidak pernah sama.
   assert.match(css, /--control-h: 40px;/);
   assert.match(css, /--control-h-sm: 34px;/);
-  assert.match(css, /\.btn,\s*\.nav-link,\s*\.input,\s*\.fleet-option \{\s*min-height: var\(--control-h\);/);
+  assert.match(css, /\.btn,\s*\.nav-link,\s*\.input \{\s*min-height: var\(--control-h\);/);
   assert.match(css, /\.btn-sm \{\s*min-height: var\(--control-h-sm\);/);
 
   // Tombol ikon harus BUJUR SANGKAR: sebelumnya hanya tingginya yang dinaikkan
@@ -186,16 +186,17 @@ test("ukuran kontrol memakai satu skala, bukan empat angka yang tidak sengaja", 
   // ada yang menyadarinya sampai salah satunya dipindahkan.
   const heightBlocks = [...css.matchAll(/@media \(pointer: coarse\)/g)];
   assert.ok(heightBlocks.length <= 2, `blok coarse harus sedikit dan jelas, ada ${heightBlocks.length}`);
-  assert.doesNotMatch(css, /\.btn,\s*\.nav-link,\s*\.input,\s*\.icon-btn,\s*\.fleet-option \{\s*min-height: 46px/);
+  assert.doesNotMatch(css, /\.btn,\s*\.nav-link,\s*\.input,\s*\.icon-btn \{\s*min-height: 46px/);
 });
 
 test("kontrol yang dulu terlewat kini ikut berukuran layak sentuh", () => {
   // Ringkasan disclosure, saran PO, dan tombol hapus chip diketuk sama
   // seringnya dengan tombol biasa, tetapi tidak pernah tersentuh aturan ukuran.
   assert.match(css, /\.filter-more > summary,\s*\.chart-table summary,\s*\.po-suggestion \{/);
-  // Tombol hapus chip PO adalah yang terkecil di seluruh aplikasi, dan satu
-  // ketukan meleset menghapus PO yang benar.
-  assert.match(css, /\.po-chip button \{[\s\S]{0,200}min-height: 26px;/);
+  // Tombol hapus PO adalah salah satu yang paling sering meleset, dan satu
+  // ketukan salah menghapus PO yang benar — jadi lebarnya mengikuti skala
+  // kontrol, bukan ukuran ikonnya.
+  assert.match(css, /\.po-row-remove \{[\s\S]{0,200}width: var\(--control-h-sm\);/);
 });
 
 test("filter lanjutan terlipat di ponsel tetapi tetap menyatakan keadaannya", () => {

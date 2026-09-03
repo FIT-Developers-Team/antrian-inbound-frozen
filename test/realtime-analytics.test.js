@@ -172,15 +172,20 @@ test("pencacah panggilan ditampilkan", () => {
   assert.match(card, /class="call-count"/);
 });
 
-test("pemilih armada berperilaku seperti radiogroup yang dijanjikannya", () => {
-  // Menyandang role tanpa perilakunya lebih buruk daripada tidak menyandangnya:
-  // pemakai pembaca layar diberi tahu ada dua belas pilihan yang dapat
-  // dijelajahi dengan panah, lalu panahnya diam.
+test("pemilih armada memakai kontrol asli, bukan grup radio tiruan", () => {
+  // Grid dua belas tombol itu pernah menyandang `role="radiogroup"` tanpa
+  // perilakunya, lalu diberi navigasi panah sendiri agar janjinya ditepati.
+  // `<select>` membuat seluruh lapisan itu tidak perlu: keyboard, pencarian
+  // ketik-huruf, dan gulungan asli perangkat sudah melekat padanya — dan di
+  // tablet gudang ia lebih mudah disentuh bersarung tangan daripada dua belas
+  // target kecil.
   const register = read("js/pages/register.js");
-  assert.match(register, /role="radiogroup"/);
-  assert.match(register, /tabindex="\$\{active \? "0" : "-1"\}"/, "roving tabindex");
-  assert.match(register, /ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1/);
-  assert.match(register, /event\.key === "Home"/);
+  assert.match(register, /<select class="input" id="fleet-select">/);
+  assert.doesNotMatch(register, /role="radiogroup"/);
+  assert.doesNotMatch(register, /roving|tabindex="\$\{active/);
+  // Keterangan armada mengikuti pilihan, jadi catatan dan tier SLA-nya tetap
+  // terbaca tanpa membuka layar Pengaturan.
+  assert.match(register, /SKU_TIERED_FLEETS\.includes\(selected\.value\)/);
 });
 
 /* -- Analitik lead time ---------------------------------------------------- */

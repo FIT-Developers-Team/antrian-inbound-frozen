@@ -173,6 +173,7 @@ const COLUMNS = [
   "request_shipping_date", "fulfillment_arrived_start_at", "schedule_type", "po_status",
   "fulfillment_receiving_start_at", "fulfillment_completed_at",
   "request_quantity", "actual_quantity", "count_sku",
+  "company_name", "source_count_sku",
 ];
 
 /** Kolom sumber yang memang sengaja tidak disimpan. */
@@ -195,27 +196,103 @@ const IGNORED_SOURCE_COLUMNS = new Set([LOCATION_COLUMN, "po", "PO"]);
 export function unmappedColumns(rows) {
   const first = rows.find((row) => row && typeof row === "object");
   if (!first) return [];
-  const known = new Set(COLUMNS);
+  // Kedua tabel dihitung: kolom yang mendarat di baris SKU bukan kolom yang
+  // terbuang. `source_count_sku` diturunkan, bukan nama kolom sumber.
+  const known = new Set([...COLUMNS, ...SKU_COLUMNS]);
   return Object.keys(first)
     .filter((key) => !known.has(key) && !IGNORED_SOURCE_COLUMNS.has(key))
     .sort();
 }
 
-const UPSERT_ASSIGNMENTS = COLUMNS.filter((column) => column !== "source_row_key")
-  .map((column) => `${column}=excluded.${column}`)
-  .join(", ");
+const SKU_COLUMNS = [
+  "source_row_key", "po_number", "location_id", "site_code", "sku_number",
+  "product_name", "l1_category_name", "company_name", "vendor_name",
+  "request_quantity", "actual_quantity",
+];
 
-function rowValues(row, byLocation) {
-  const locationId = String(row[LOCATION_COLUMN]);
-  const poNumber = text(row.po_number ?? row.po ?? row.PO);
-  if (!poNumber) return null;
+const assignments = (columns) =>
+  columns.filter((column) => column !== "source_row_key")
+    .map((column) => `${column}=excluded.${column}`)
+    .join(", ");
+
+const UPSERT_ASSIGNMENTS = assignments(COLUMNS);
+const SKU_UPSERT_ASSIGNMENTS = assignments(SKU_COLUMNS);
+
+const poNumberOf = (row) => text(row.po_number ?? row.po ?? row.PO);
+
+/**
+ * Mengelompokkan baris sumber menurut PO.
+ *
+ * Chart mengirim satu baris per PO x SKU, sedangkan `superset_po_master`
+ * menyimpan satu baris per PO. Kunci `location_id|po_number` karena itu dipakai
+ * beberapa baris sekaligus, dan `on conflict do update` membuat yang terakhir
+ * menang — sehingga yang tersimpan sebagai "total PO" sebenarnya angka satu SKU.
+ *
+ * Kelompok ini yang memperbaikinya: totalnya DITURUNKAN dari barisnya.
+ *
+ * ASUMSI YANG PERLU DISADARI. `request_quantity` diperlakukan sebagai jumlah
+ * PER SKU, jadi total PO adalah jumlahnya. Itu benar bila chart-nya memang
+ * per-baris SKU; bila kelak ia justru mengulang total PO pada tiap barisnya,
+ * penjumlahan ini melipatgandakannya. Karena itu `count_sku` bawaan chart tetap
+ * disimpan apa adanya sebagai `source_count_sku`, dan setiap kali ia berbeda
+ * dari jumlah SKU yang dihitung sendiri, selisihnya dilaporkan sebagai catatan
+ * sync — di situlah asumsi ini terbukti atau terbantah, dengan angka.
+ */
+export function groupByPo(rows, byLocation) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const poNumber = poNumberOf(row);
+    if (!poNumber) return;
+    const locationId = String(row[LOCATION_COLUMN]);
+    const key = `${locationId}|${poNumber}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, locationId, poNumber, head: row, skus: new Map() };
+      groups.set(key, group);
+    }
+    const skuNumber = text(row.sku_number);
+    // Baris SKU yang sama muncul dua kali tidak dihitung dua kali.
+    if (skuNumber && !group.skus.has(skuNumber)) group.skus.set(skuNumber, row);
+  });
+  return [...groups.values()].map((group) => ({
+    ...group,
+    siteCode: byLocation.get(group.locationId),
+  }));
+}
+
+/**
+ * Satu baris `superset_po_master` untuk satu PO.
+ *
+ * Ketika barisnya membawa `sku_number`, jumlah dan cacah SKU diturunkan dari
+ * baris-baris itu. Ketika tidak — chart yang memang sudah teragregasi per PO —
+ * angkanya diambil apa adanya dari barisnya sendiri, persis seperti sebelumnya.
+ * Bentuk chart karena itu tidak perlu ditebak di muka.
+ */
+export function poRowValues(group) {
+  const { head, skus, locationId, poNumber, siteCode } = group;
+  const lines = [...skus.values()];
+  const derived = lines.length > 0;
   return [
-    `${locationId}|${poNumber}`, poNumber, text(row.vendor_name), locationId,
-    text(row.location_name), byLocation.get(locationId), text(row.request_shipping_date),
-    text(row.fulfillment_arrived_start_at), text(row.schedule_type), text(row.po_status),
-    text(row.fulfillment_receiving_start_at), text(row.fulfillment_completed_at),
-    number(row.request_quantity), number(row.actual_quantity), number(row.count_sku),
+    group.key, poNumber, text(head.vendor_name), locationId,
+    text(head.location_name), siteCode, text(head.request_shipping_date),
+    text(head.fulfillment_arrived_start_at), text(head.schedule_type), text(head.po_status),
+    text(head.fulfillment_receiving_start_at), text(head.fulfillment_completed_at),
+    derived ? lines.reduce((sum, line) => sum + number(line.request_quantity), 0) : number(head.request_quantity),
+    derived ? lines.reduce((sum, line) => sum + number(line.actual_quantity), 0) : number(head.actual_quantity),
+    derived ? lines.length : number(head.count_sku),
+    text(head.company_name),
+    // Cacah SKU bawaan chart, disimpan berdampingan untuk dibandingkan.
+    head.count_sku === undefined || head.count_sku === null ? null : number(head.count_sku),
   ];
+}
+
+export function skuRowValues(group) {
+  const { locationId, poNumber, siteCode, skus } = group;
+  return [...skus.entries()].map(([skuNumber, row]) => [
+    `${locationId}|${poNumber}|${skuNumber}`, poNumber, locationId, siteCode, skuNumber,
+    text(row.product_name), text(row.l1_category_name), text(row.company_name),
+    text(row.vendor_name), number(row.request_quantity), number(row.actual_quantity),
+  ]);
 }
 
 /**
@@ -278,30 +355,72 @@ export function auditRowKeys(values) {
   return { unique: seen.size, duplicates, conflicts, conflicting };
 }
 
+async function upsert(client, table, columns, assignmentList, values) {
+  for (let offset = 0; offset < values.length; offset += BATCH_SIZE) {
+    const batch = values.slice(offset, offset + BATCH_SIZE);
+    const placeholders = batch
+      .map(
+        (_, rowIndex) =>
+          `(${columns.map((_, columnIndex) => `$${rowIndex * columns.length + columnIndex + 1}`).join(",")}, now())`,
+      )
+      .join(",");
+    await client.query(
+      `insert into ${table}(${columns.join(", ")}, synced_at)
+       values ${placeholders}
+       on conflict (source_row_key) do update set ${assignmentList}, synced_at=now()`,
+      batch.flat(),
+    );
+  }
+}
+
 async function writeRows(pool, rows, byLocation) {
-  const values = rows.map((row) => rowValues(row, byLocation)).filter(Boolean);
-  if (!values.length) return 0;
+  const groups = groupByPo(rows, byLocation);
+  if (!groups.length) return { written: 0, skuWritten: 0, audit: auditRowKeys([]), mismatched: [] };
+
+  const poValues = groups.map(poRowValues);
+  const skuValues = groups.flatMap(skuRowValues);
+
+  // Cacah SKU yang dihitung sendiri vs yang dikirim chart. Selisihnya adalah
+  // satu-satunya tempat asumsi "satu baris = satu SKU" dapat terbantah dengan
+  // angka, bukan dengan dugaan.
+  const mismatched = groups
+    .filter((group) => {
+      const source = group.head.count_sku;
+      if (source === undefined || source === null || group.skus.size === 0) return false;
+      return Number(source) !== group.skus.size;
+    })
+    .map((group) => `${group.poNumber} (chart ${group.head.count_sku}, baris ${group.skus.size})`)
+    .slice(0, 5);
 
   const client = await pool.connect();
   try {
     await client.query("begin");
-    for (let offset = 0; offset < values.length; offset += BATCH_SIZE) {
-      const batch = values.slice(offset, offset + BATCH_SIZE);
-      const placeholders = batch
-        .map(
-          (_, rowIndex) =>
-            `(${COLUMNS.map((_, columnIndex) => `$${rowIndex * COLUMNS.length + columnIndex + 1}`).join(",")}, now())`,
-        )
-        .join(",");
+    await upsert(client, "superset_po_master", COLUMNS, UPSERT_ASSIGNMENTS, poValues);
+    if (skuValues.length) {
+      await upsert(client, "superset_po_sku", SKU_COLUMNS, SKU_UPSERT_ASSIGNMENTS, skuValues);
+
+      // SKU yang HILANG dari sebuah PO harus ikut hilang di sini.
+      //
+      // Upsert saja tidak pernah menghapus, jadi SKU yang dicabut dari sebuah PO
+      // akan menetap selamanya dan terus ikut dihitung sebagai jumlah SKU —
+      // yang lalu menggeser target SLA-nya. Penghapusan dibatasi pada PO yang
+      // BENAR-BENAR baru saja terlihat pada siklus ini: PO yang hilang seluruhnya
+      // dari feed dibiarkan utuh, karena feed yang tiba-tiba kosong hampir selalu
+      // gangguan sumber, bukan PO yang benar-benar dibatalkan.
       await client.query(
-        `insert into superset_po_master(${COLUMNS.join(", ")}, synced_at)
-         values ${placeholders}
-         on conflict (source_row_key) do update set ${UPSERT_ASSIGNMENTS}, synced_at=now()`,
-        batch.flat(),
+        `delete from superset_po_sku
+          where (location_id || '|' || po_number) = any($1::text[])
+            and source_row_key <> all($2::text[])`,
+        [groups.filter((group) => group.skus.size).map((group) => group.key), skuValues.map((value) => value[0])],
       );
     }
     await client.query("commit");
-    return { written: values.length, audit: auditRowKeys(values) };
+    return {
+      written: poValues.length,
+      skuWritten: skuValues.length,
+      audit: auditRowKeys(poValues),
+      mismatched,
+    };
   } catch (error) {
     await client.query("rollback").catch(() => {});
     throw error;
@@ -350,7 +469,7 @@ export async function runSupersetSync(pool) {
     // Hanya baris milik gudang aktif yang disimpan, apa pun yang dikirim chart.
     const scoped = rows.filter((row) => byLocation.has(String(row[LOCATION_COLUMN] ?? "")));
 
-    const { written, audit } = await writeRows(pool, scoped, byLocation);
+    const { written, skuWritten, audit, mismatched } = await writeRows(pool, scoped, byLocation);
 
     // Konflik dicatat sebagai CATATAN, bukan kegagalan: barisnya tetap tersimpan
     // dan papan tetap berjalan. Yang tidak boleh terjadi adalah ia berlalu tanpa
@@ -366,6 +485,11 @@ export async function runSupersetSync(pool) {
           ? `${audit.duplicates} baris duplikat per PO, angkanya identik; nilai tersimpan tetap benar.`
           : null,
       unmapped.length ? `Kolom sumber yang belum disimpan: ${unmapped.join(", ")}.` : null,
+      mismatched.length
+        ? `Cacah SKU chart berbeda dari jumlah barisnya pada ${mismatched.length} PO ` +
+          `(${mismatched.join("; ")}). Satu baris tampaknya BUKAN satu SKU, jadi total ` +
+          "request_quantity yang dijumlahkan dari baris kemungkinan terlalu besar."
+        : null,
     ].filter(Boolean);
     const note = notes.length ? notes.join(" ") : null;
 
@@ -376,8 +500,9 @@ export async function runSupersetSync(pool) {
     if (audit.conflicts) console.error(`[superset] ${notes[0]}`);
     else if (audit.duplicates) console.warn(`[superset] ${notes[0]}`);
     if (unmapped.length) console.warn(`[superset] kolom sumber belum disimpan: ${unmapped.join(", ")}`);
-    console.log(`[superset] ${written} PO tersimpan (${mode}).`);
-    return { fetched: rows.length, written, mode, unique: audit.unique, unmapped, note };
+    if (mismatched.length) console.error(`[superset] cacah SKU tidak cocok: ${mismatched.join("; ")}`);
+    console.log(`[superset] ${written} PO tersimpan${skuWritten ? `, ${skuWritten} baris SKU` : ""} (${mode}).`);
+    return { fetched: rows.length, written, sku_written: skuWritten, mode, unique: audit.unique, unmapped, note };
   } catch (error) {
     // Pencatatan kegagalan tidak boleh melempar galat kedua: bila database
     // sendiri yang bermasalah, update ini ikut gagal, dan galat itulah yang

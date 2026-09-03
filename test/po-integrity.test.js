@@ -127,6 +127,9 @@ test("kolom sumber yang belum disimpan dilaporkan, bukan dibuang diam-diam", asy
   // yang ditambahkan di sana tidak akan pernah muncul di sini maupun memberi
   // kabar bahwa ia ada. Inilah yang menjawab "apakah sumbernya sudah membawa
   // sku_number / product_name / l1_category_name / company_name".
+  // Keempat kolom yang diminta sudah punya tempatnya: company_name di master,
+  // sisanya di superset_po_sku. Yang dilaporkan tinggal yang benar-benar tidak
+  // disimpan tabel mana pun.
   assert.deepEqual(
     unmappedColumns([
       {
@@ -139,9 +142,10 @@ test("kolom sumber yang belum disimpan dilaporkan, bukan dibuang diam-diam", asy
         sku_number: "SKU1",
         product_name: "Produk",
         l1_category_name: "Frozen",
+        kolom_baru_dari_superset: "x",
       },
     ]),
-    ["company_name", "l1_category_name", "product_name", "sku_number"],
+    ["kolom_baru_dari_superset"],
   );
 
   // Chart yang persis sepadan dengan tabelnya tidak menghasilkan catatan.
@@ -155,4 +159,66 @@ test("catatan sync yang tidak menggagalkan apa pun tetap sampai ke layar", () =>
   assert.match(sql, /'last_run_notes', \(select notes from last_run\)/);
   assert.match(sql, /alter table sync_runs add column if not exists notes text/);
   assert.match(settings, /source\.last_run_notes/);
+});
+
+/* -- Agregasi PO dari baris SKU ---------------------------------------------*/
+
+test("total PO diturunkan dari baris SKU-nya, bukan diambil dari baris terakhir", async () => {
+  const { groupByPo, poRowValues, skuRowValues } = await importModule("api/sync-superset.mjs");
+
+  // Chart mengirim satu baris per PO x SKU. Dengan kunci `location_id|po_number`
+  // dan `on conflict do update`, baris terakhirlah yang menang — sehingga yang
+  // tersimpan sebagai total PO sebenarnya angka satu SKU. Pada contoh di bawah
+  // itu berarti 400, bukan 750: hampir separuh muatan hilang dari catatan.
+  const rows = [
+    { location_id: "160", po_number: "PO-A", vendor_name: "PT Sukanda", company_name: "PT Sukanda Group",
+      sku_number: "SKU-1", product_name: "Nugget", l1_category_name: "Frozen", request_quantity: 100, count_sku: 3 },
+    { location_id: "160", po_number: "PO-A", vendor_name: "PT Sukanda", company_name: "PT Sukanda Group",
+      sku_number: "SKU-2", product_name: "Sosis", l1_category_name: "Frozen", request_quantity: 250, count_sku: 3 },
+    { location_id: "160", po_number: "PO-A", vendor_name: "PT Sukanda", company_name: "PT Sukanda Group",
+      sku_number: "SKU-3", product_name: "Bakso", l1_category_name: "Seafood", request_quantity: 400, count_sku: 3 },
+    // Baris SKU yang sama muncul dua kali tidak boleh dihitung dua kali.
+    { location_id: "160", po_number: "PO-A", vendor_name: "PT Sukanda", company_name: "PT Sukanda Group",
+      sku_number: "SKU-3", product_name: "Bakso", l1_category_name: "Seafood", request_quantity: 400, count_sku: 3 },
+  ];
+
+  const groups = groupByPo(rows, new Map([["160", "PGS"]]));
+  assert.equal(groups.length, 1, "empat baris, satu PO");
+  assert.equal(groups[0].skus.size, 3, "SKU ganda tidak dihitung dua kali");
+
+  const po = poRowValues(groups[0]);
+  const columnAt = (name) =>
+    po[
+      [
+        "source_row_key", "po_number", "vendor_name", "location_id", "location_name", "site_code",
+        "request_shipping_date", "fulfillment_arrived_start_at", "schedule_type", "po_status",
+        "fulfillment_receiving_start_at", "fulfillment_completed_at",
+        "request_quantity", "actual_quantity", "count_sku", "company_name", "source_count_sku",
+      ].indexOf(name)
+    ];
+  assert.equal(columnAt("request_quantity"), 750, "dijumlahkan dari baris SKU, bukan diambil yang terakhir");
+  assert.equal(columnAt("count_sku"), 3);
+  assert.equal(columnAt("company_name"), "PT Sukanda Group");
+  assert.equal(columnAt("site_code"), "PGS");
+
+  // Setiap SKU membawa produk dan kategorinya sendiri.
+  const skus = skuRowValues(groups[0]);
+  assert.equal(skus.length, 3);
+  assert.deepEqual(skus.map((value) => value[4]).sort(), ["SKU-1", "SKU-2", "SKU-3"]);
+  assert.equal(skus[0][0], "160|PO-A|SKU-1", "kunci baris SKU memuat nomor SKU-nya");
+});
+
+test("chart yang sudah teragregasi per PO tetap dibaca apa adanya", async () => {
+  const { groupByPo, poRowValues } = await importModule("api/sync-superset.mjs");
+
+  // Tanpa `sku_number`, tidak ada yang dapat dijumlahkan — dan menjumlahkan
+  // tetap akan salah. Angkanya karena itu diambil dari barisnya sendiri, persis
+  // seperti sebelum lapisan SKU ada. Bentuk chart tidak perlu ditebak di muka.
+  const groups = groupByPo(
+    [{ location_id: "160", po_number: "PO-Z", request_quantity: 1250, count_sku: 18, vendor_name: "V" }],
+    new Map([["160", "PGS"]]),
+  );
+  const po = poRowValues(groups[0]);
+  assert.equal(po[12], 1250, "request_quantity apa adanya");
+  assert.equal(po[14], 18, "count_sku apa adanya");
 });
