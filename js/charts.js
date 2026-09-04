@@ -151,9 +151,17 @@ function gridAndAxis(max, formatValue, ticks) {
  * pada rentang empat belas hari itu menghasilkan "09-02" dan "09-03" yang
  * saling menimpa menjadi satu gumpalan di ujung kanan setiap grafik.
  */
-function xLabels(items, xOf, label) {
+function xLabels(items, xOf, label, { maxLabels } = {}) {
   // Kanvas ponsel hanya selebar 340 unit; delapan label di atasnya bertumpuk.
-  const every = Math.max(1, Math.ceil(items.length / (compact() ? 4 : 8)));
+  //
+  // `maxLabels` menaikkan langit-langit itu untuk sumbu KATEGORIKAL. Pada deret
+  // waktu, melewatkan sebagian tanggal tidak menghilangkan apa pun — posisi
+  // batang sudah menyiratkan harinya. Pada sembilan pintu dok, melewatkan
+  // separuh labelnya membuat batang tidak dapat dikenali sama sekali: yang
+  // tampil "01, 03, 05, 07, 09" menyisakan empat batang tanpa nama, dan
+  // pertanyaan yang dijawab grafik itu justru "pintu mana".
+  const ceiling = maxLabels || (compact() ? 4 : 8);
+  const every = Math.max(1, Math.ceil(items.length / ceiling));
   const last = items.length - 1;
   const shown = new Set();
   for (let index = 0; index <= last; index += every) shown.add(index);
@@ -284,14 +292,26 @@ export function complianceChart(days, { title, description, target = 90 }) {
 
   const last = points[points.length - 1];
 
+  // Dua label berebut sudut kanan atas: "target 90%" menempel di tepi kanan pada
+  // ketinggian garis targetnya, dan nilai terakhir menempel di titik terakhir —
+  // yang pada rentang sehat berada tepat di sekitar garis itu. Keduanya lalu
+  // saling menimpa menjadi satu gumpalan yang tidak terbaca sebagai apa pun.
+  //
+  // Label target karena itu pindah ke KIRI BAWAH garisnya: kepatuhan yang sehat
+  // berada di atas 90%, jadi bidang di bawah garis adalah bagian grafik yang
+  // memang kosong. Label nilai terakhir naik atau turun menjauhi garis,
+  // mengikuti sisi mana ia berada.
+  const above = last.value >= target;
+  const lastY = y(last.value) + (above ? -13 : 19);
+
   return frame(
     `${gridAndAxis(max, (v) => `${Math.round(v)}%`, ticks)}
      <line x1="${PAD.left}" y1="${y(target)}" x2="${W - PAD.right}" y2="${y(target)}"
        stroke="${seriesColor("volume")}" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.85" />
-     <text class="chart-axis" x="${W - PAD.right}" y="${y(target) - 6}" text-anchor="end">target ${target}%</text>
+     <text class="chart-axis" x="${PAD.left + 6}" y="${y(target) + 14}">target ${target}%</text>
      <path class="chart-line" d="${path}" stroke="${color}" />
      ${dots}
-     <text class="chart-label" x="${xOf(last.index)}" y="${y(last.value) - 12}" text-anchor="end">${last.value}%</text>
+     <text class="chart-label" x="${xOf(last.index)}" y="${lastY}" text-anchor="end">${last.value}%</text>
      ${xLabels(days, xOf, (day) => day.day.slice(5))}`,
     { title, description },
   );
@@ -304,7 +324,10 @@ export function complianceChart(days, { title, description, target = 90 }) {
  * tetap menempel pada garis dasar; batang melayang membuat perbandingan tinggi
  * menjadi tidak jujur.
  * ----------------------------------------------------------------------- */
-export function columnChart(items, { title, description, series = "volume", valueOf, labelOf, tipOf, formatValue }) {
+export function columnChart(
+  items,
+  { title, description, series = "volume", valueOf, labelOf, tipOf, formatValue, maxLabels },
+) {
   if (!items.length || items.every((item) => !valueOf(item))) {
     return chartEmpty("Belum ada data pada rentang ini.");
   }
@@ -332,7 +355,7 @@ export function columnChart(items, { title, description, series = "volume", valu
   return frame(
     `${gridAndAxis(max, formatValue || ((v) => String(Math.round(v))), ticks)}
      ${bars}
-     ${xLabels(items, xOf, labelOf)}`,
+     ${xLabels(items, xOf, labelOf, { maxLabels })}`,
     { title, description },
   );
 }

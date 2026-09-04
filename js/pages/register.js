@@ -10,7 +10,7 @@ import * as api from "../api.js";
 import * as store from "../store.js";
 import { DEFAULT_FLEET, FLEET_TYPES, SKU_TIERED_FLEETS, currentSite } from "../config.js";
 import { esc, isValidPlate, normalizePlate, num, toLocalInputValue } from "../format.js";
-import { badge, debounce, icon, pageHeader, section, toast, withBusy } from "../ui.js";
+import { badge, debounce, dialog, fieldError, icon, pageHeader, req, section, toast, withBusy } from "../ui.js";
 
 /** Isian yang bertahan antar render, sehingga daftar PO tidak hilang saat mengetik. */
 const form = {
@@ -26,7 +26,18 @@ const form = {
   manualPo: "",
 };
 
+/**
+ * Galat per medan dari percobaan kirim terakhir. Validasi dulu mengembalikan
+ * satu kalimat sebagai toast: operator menemukan kesalahannya satu per satu,
+ * sementara medan yang dimaksud tidak pernah ditandai maupun difokuskan.
+ */
+let problems = {};
+
+/** Anchor untuk memindahkan fokus ke medan pertama yang salah. */
+const FIELD_ANCHOR = { arrivedAt: "#arrived-at", plate: "#plate-prefix", pos: "#po-query" };
+
 function resetForm() {
+  problems = {};
   form.arrivedAt = toLocalInputValue();
   form.fleet = DEFAULT_FLEET;
   form.plate = { prefix: "", number: "", suffix: "" };
@@ -43,25 +54,19 @@ function resetForm() {
  * Bagian formulir
  * ----------------------------------------------------------------------- */
 /**
- * Pemilih armada — satu daftar pilihan.
+ * Pemilih armada — satu daftar pilihan, bukan dua belas tombol.
  *
- * Sebelumnya dua belas tombol dalam grid. Di ponsel itu enam baris penuh, yaitu
- * bagian TERBESAR layar pendaftaran, untuk satu nilai yang pada kebanyakan
- * shift tidak pernah bergeser dari bawaannya. Grid itu juga menyandang peran
- * grup radio tanpa pernah berperilaku seperti grup radio, sampai navigasi
- * panahnya ditambahkan belakangan.
- *
- * `<select>` membawa semuanya tanpa satu baris kode: keyboard, pencarian
- * ketik-huruf, dan gulungan asli perangkat — yang di tablet gudang justru lebih
- * mudah disentuh bersarung tangan daripada dua belas target kecil.
- *
- * Keterangan di bawahnya mengikuti pilihan, sehingga catatan armada dan tier
- * SLA-nya tetap terbaca tanpa membuka layar Pengaturan.
+ * Grid dua belas tombol memenuhi enam baris di ponsel — bagian terbesar layar
+ * pendaftaran — untuk satu nilai yang jarang bergeser dari bawaannya, dan ia
+ * menyandang peran grup radio tanpa berperilaku seperti grup radio. `<select>`
+ * membawa keyboard, pencarian ketik-huruf, dan gulungan asli perangkat tanpa
+ * satu baris kode; keterangan di bawahnya mengikuti pilihan sehingga tier SLA
+ * terbaca tanpa membuka Pengaturan.
  */
 function fleetPicker() {
   const selected = FLEET_TYPES.find((fleet) => fleet.value === form.fleet);
   return `<label>
-    <span>Tipe armada</span>
+    <span>Tipe armada ${req()}</span>
     <select class="input" id="fleet-select">
       ${FLEET_TYPES.map(
         (fleet) =>
@@ -85,7 +90,7 @@ function fleetPicker() {
  */
 function plateInput() {
   const value = normalizePlate(form.plate.prefix, form.plate.number, form.plate.suffix);
-  const invalid = value && !isValidPlate(value);
+  const invalid = (value && !isValidPlate(value)) || Boolean(problems.plate);
   return `<div class="plate-input">
       <input id="plate-prefix" inputmode="text" maxlength="2" placeholder="B"
              aria-label="Kode wilayah" value="${esc(form.plate.prefix)}"
@@ -99,18 +104,15 @@ function plateInput() {
     </div>
     ${
       invalid
-        ? `<span class="field-error">Format plat belum benar. Contoh: B 1234 XYZ.</span>`
-        : `<span class="plate-preview" id="plate-preview">${esc(value || "— — —")}</span>`
+        ? fieldError(problems.plate || "Format plat nomor belum benar. Contoh: B 1234 XYZ.", "err-plate")
+        : `<span class="plate-preview" id="plate-preview" aria-hidden="true">${esc(value || "— — —")}</span>`
     }`;
 }
 
 /**
- * Hasil pencarian PO terakhir dari server.
- *
- * Sebelumnya di sini ada indeks tiga puluh ribu baris yang dibangun di tablet
- * dari master yang diunduh utuh. Yang tersisa sekarang hanya delapan baris
- * terakhir yang benar-benar ditampilkan — pencariannya sendiri dikerjakan
- * Postgres lewat index trigram.
+ * Hasil pencarian PO terakhir dari server — delapan baris, bukan indeks tiga
+ * puluh ribu baris yang dulu dibangun di tablet dari master yang diunduh utuh.
+ * Pencariannya dikerjakan Postgres lewat index trigram.
  */
 let suggestions = [];
 let searchToken = 0;
@@ -146,15 +148,11 @@ function suggestionMarkup() {
 /**
  * Vendor: DIBACA dari PO, bukan diketik — selama ada satu PO master terpilih.
  *
- * Server memang sudah menimpanya dengan vendor milik master saat tiket dibuat,
- * jadi kotak yang dapat diketik di sini hanya menawarkan pekerjaan yang
- * hasilnya dibuang: operator mengetik satu nama, tiketnya tersimpan dengan nama
- * lain, dan tidak ada yang menjelaskan mengapa. Menampilkannya sebagai fakta
- * turunan membuat layar dan basis data mengatakan hal yang sama.
- *
+ * Server menimpanya dengan vendor milik master saat tiket dibuat, jadi kotak
+ * yang dapat diketik hanya menawarkan pekerjaan yang hasilnya dibuang: operator
+ * mengetik satu nama, tiketnya tersimpan dengan nama lain, tanpa penjelasan.
  * Kotaknya kembali dapat diketik hanya ketika seluruh PO-nya manual — di situ
- * memang tidak ada master yang dapat menjawab, dan nama vendor yang diketik
- * operator adalah satu-satunya yang ada.
+ * tidak ada master yang dapat menjawab.
  */
 function vendorField() {
   const fromMaster = form.pos.find((po) => !po.is_manual && po.vendor_name);
@@ -183,19 +181,17 @@ function vendorField() {
 /**
  * PO terpilih, dengan angkanya ikut terlihat.
  *
- * Sebelumnya PO yang sudah dipilih menyusut menjadi chip berisi nomornya saja.
- * Vendor, jumlah SKU, dan qty memang sempat tampil — tetapi hanya di daftar
- * saran, yaitu tepat SEBELUM operator memilih, lalu hilang begitu ia memilih.
- * Justru sesudah memilih itulah angkanya perlu dibaca: itu satu-satunya
- * kesempatan mencocokkan apa yang tertera di surat jalan dengan apa yang ada di
- * master sebelum tiketnya tersimpan.
- *
- * Totalnya dijumlahkan di baris terakhir karena satu truk kerap membawa
- * beberapa PO, dan yang dicocokkan dengan muatan adalah jumlah keseluruhannya.
+ * Vendor, SKU, dan qty dulu hanya tampil di daftar saran — tepat SEBELUM
+ * operator memilih — lalu hilang begitu ia memilih. Justru sesudah memilih
+ * itulah angkanya perlu dibaca: satu-satunya kesempatan mencocokkan surat jalan
+ * dengan master sebelum tiketnya tersimpan. Totalnya dijumlahkan karena satu
+ * truk kerap membawa beberapa PO.
  */
 function poList() {
   if (!form.pos.length) {
-    return `<p class="section-note">Belum ada PO dipilih. Minimal satu PO wajib diisi.</p>`;
+    return problems.pos
+      ? fieldError(problems.pos, "err-pos")
+      : `<p class="section-note">Belum ada PO dipilih. Minimal satu PO wajib diisi.</p>`;
   }
 
   const totalSku = form.pos.reduce((sum, po) => sum + (Number(po.count_sku) || 0), 0);
@@ -236,17 +232,16 @@ function poPicker() {
     <label>
       <span>Cari PO</span>
       <input class="input" type="search" id="po-query" placeholder="Nomor PO atau nama vendor"
-             value="${esc(form.poQuery)}" autocomplete="off" />
+             value="${esc(form.poQuery)}" autocomplete="off"
+             ${problems.pos ? 'aria-invalid="true" aria-describedby="err-pos"' : ""} />
     </label>
 
     <div class="po-suggestions" id="po-suggestions">${suggestionMarkup()}</div>
 
     <label>
       <span>PO manual</span>
-      <!-- Kotak dan tombolnya membungkus ketika kolomnya sempit. Sebagai satu
-           baris fleks yang dipaksa, kotaknya tergencet sampai placeholder-nya
-           terpotong di tengah kata dan nomor PO yang sedang diketik tidak
-           terlihat utuh. -->
+      <!-- Membungkus ketika kolomnya sempit: sebagai satu baris fleks yang
+           dipaksa, kotaknya tergencet sampai placeholder-nya terpotong. -->
       <div class="inline-field">
         <input class="input" id="manual-po" placeholder="Nomor PO di luar master"
                value="${esc(form.manualPo)}" autocomplete="off" />
@@ -281,16 +276,18 @@ export function render(root) {
             title: "Kedatangan & kendaraan",
             body: `<div class="form-grid">
               <label class="span-2">
-                <span>Jam kedatangan</span>
+                <span>Jam kedatangan ${req()}</span>
                 <input class="input" type="datetime-local" id="arrived-at"
-                       max="${toLocalInputValue()}" value="${esc(form.arrivedAt)}" required />
+                       max="${toLocalInputValue()}" value="${esc(form.arrivedAt)}" required
+                       ${problems.arrivedAt ? 'aria-invalid="true" aria-describedby="err-arrivedAt"' : ""} />
+                ${fieldError(problems.arrivedAt, "err-arrivedAt")}
                 <small>Jam truk tiba di pos, bukan jam formulir ini diisi. Lama tunggu driver dihitung dari sini.</small>
               </label>
 
               <div class="span-2">${fleetPicker()}</div>
 
               <div class="span-2">
-                <label for="plate-prefix"><span>Plat nomor</span></label>
+                <label for="plate-prefix"><span>Plat nomor ${req()}</span></label>
                 ${plateInput()}
               </div>
 
@@ -308,25 +305,18 @@ export function render(root) {
 
           ${section({
             eyebrow: "Langkah 2",
+            // section() meng-escape judulnya, jadi penanda wajib tidak dapat
+            // dititipkan di sini; untuk bagian ini catatan di dalam badannya
+            // ("Minimal satu PO wajib diisi") yang membawanya.
             title: "Purchase order",
             body: poPicker(),
           })}
         </div>
 
-        <!--
-          Urutan langkah mengikuti URUTAN BACA, bukan urutan berkas.
-
-          Di desktop mata membaca satu kolom sampai habis lalu pindah ke kolom
-          berikutnya; di ponsel kedua kolom bertumpuk. Kolom kiri karena itu
-          memuat langkah 1 dan 2, kolom kanan langkah 3 dan tombol simpannya —
-          terbaca 1 → 2 → 3 dalam kedua tata letak.
-
-          Pembagiannya juga mengikuti BOBOT isinya. Ketika pemilih armada masih
-          berupa grid dua belas tombol, langkah 1 sendirian mengisi kolom kiri;
-          setelah ia menjadi satu daftar pilihan, kolomnya tinggal separuh
-          terisi sementara kolom kanan meluber. Daftar PO tumbuh seiring PO
-          ditambahkan, jadi ia yang sekarang menemani langkah 1 di kolom lebar.
-        -->
+        <!-- Urutan langkah mengikuti URUTAN BACA: kolom kiri memuat langkah 1
+             dan 2, kolom kanan langkah 3 dan tombol simpannya, sehingga
+             terbaca 1 → 2 → 3 baik berdampingan maupun bertumpuk. Daftar PO
+             menemani langkah 1 di kolom lebar karena ia yang tumbuh. -->
         <div class="dashboard-page">
           ${section({
             eyebrow: "Langkah 3",
@@ -349,8 +339,8 @@ export function render(root) {
             title: "Simpan tiket",
             body: `<div class="dashboard-page">
               <p class="section-note">
+                <span class="req-legend">${req()} wajib diisi.</span>
                 Nomor antrean, target SLA, dan tenggat dihitung di server sesuai armada dan jumlah SKU.
-                Tiket langsung tampil di Papan Antrean.
               </p>
               <button type="submit" class="btn btn-primary btn-block" id="submit-ticket">
                 ${icon("check", 18)} Simpan &amp; masuk antrean
@@ -372,11 +362,7 @@ export function render(root) {
 function bindEvents(root) {
   const rerender = () => render(root);
 
-  // Armada adalah daftar pilihan biasa. Sebelumnya ia dua belas tombol yang
-  // memenuhi enam baris di ponsel — bagian terbesar layar pendaftaran, untuk
-  // satu nilai yang jarang berubah dari bawaannya. Daftar pilihan juga membawa
-  // keyboard, pencarian ketik-huruf, dan gulungan asli perangkat tanpa satu
-  // baris kode pun.
+  // Alasan bentuknya ada di docblock fleetPicker().
   root.querySelector("#fleet-select")?.addEventListener("change", (event) => {
     form.fleet = event.target.value;
     // Digambar ulang supaya keterangan di bawahnya mengikuti armada terpilih.
@@ -395,6 +381,7 @@ function bindEvents(root) {
       const cleaned = key === "number" ? raw.replace(/[^0-9]/g, "") : raw.replace(/[^A-Z]/g, "");
       event.target.value = cleaned;
       form.plate[key] = cleaned;
+      delete problems.plate;
       const preview = root.querySelector("#plate-preview");
       if (preview) {
         preview.textContent =
@@ -406,9 +393,12 @@ function bindEvents(root) {
     });
   });
 
+  // Galat sebuah medan hilang begitu medannya disunting: menahannya sampai kirim
+  // berikutnya membuat tanda merah bertahan pada isian yang sudah diperbaiki.
   const bind = (id, key, transform = (value) => value) => {
     root.querySelector(`#${id}`)?.addEventListener("input", (event) => {
       form[key] = transform(event.target.value);
+      if (problems[key]) delete problems[key];
     });
   };
   bind("arrived-at", "arrivedAt");
@@ -421,10 +411,8 @@ function bindEvents(root) {
     form.ticketType = event.target.value;
   });
 
-  // Mengetik hanya menulis ulang kotak saran. Halaman penuh TIDAK digambar
-  // ulang: itulah yang dulu memaksa fokus dikembalikan dengan tangan setiap
-  // ketukan, dan yang membuat kursor selalu melompat ke ujung sehingga
-  // menyunting di tengah nomor PO mustahil.
+  // Mengetik hanya menulis ulang kotak saran; menggambar ulang halaman penuh
+  // dulu memaksa fokus dan posisi kursor dipulihkan dengan tangan.
   const paintSuggestions = () => {
     const slot = root.querySelector("#po-suggestions");
     if (slot) slot.innerHTML = suggestionMarkup();
@@ -432,13 +420,9 @@ function bindEvents(root) {
   };
 
   /**
-   * Mencari ke server, dengan penjaga balapan.
-   *
-   * Ketikan cepat menghasilkan beberapa permintaan yang berjalan bersamaan, dan
-   * jaringan tidak menjamin urutan kedatangannya. Tanpa token ini, jawaban
-   * untuk "PO001" yang datang terlambat dapat menimpa jawaban untuk "PO0012"
-   * yang sudah tampil — operator melihat daftar yang tidak cocok dengan apa
-   * yang ada di kotak.
+   * Mencari ke server, dengan penjaga balapan: ketikan cepat menghasilkan
+   * beberapa permintaan bersamaan dan jaringan tidak menjamin urutannya, jadi
+   * jawaban untuk "PO001" yang terlambat dapat menimpa jawaban "PO0012".
    */
   const runSearch = async () => {
     const query = form.poQuery.trim();
@@ -499,9 +483,25 @@ function bindEvents(root) {
     });
   });
 
+  // Konfirmasi hanya muncul bila memang ada yang akan hilang — termasuk daftar
+  // PO yang mungkin butuh beberapa pencarian untuk disusun.
   root.querySelector("#reset-form")?.addEventListener("click", () => {
-    resetForm();
-    render(root);
+    const wipe = () => {
+      resetForm();
+      render(root);
+      return true;
+    };
+    const filled =
+      form.pos.length || form.driverName.trim() || form.driverPhone.trim() ||
+      normalizePlate(form.plate.prefix, form.plate.number, form.plate.suffix);
+    if (!filled) return wipe();
+    return dialog({
+      title: "Kosongkan formulir?",
+      confirmLabel: "Kosongkan",
+      confirmTone: "danger",
+      body: `<p>Seluruh isian dibuang, termasuk ${form.pos.length} PO yang sudah dipilih.</p>`,
+      onConfirm: wipe,
+    });
   });
 
   root.querySelector("#register-form")?.addEventListener("submit", (event) => {
@@ -513,23 +513,15 @@ function bindEvents(root) {
 /* --------------------------------------------------------------------------
  * Kirim
  * ----------------------------------------------------------------------- */
-/**
- * Tombol saran dipasang ulang setiap kali isi kotaknya berganti.
- *
- * Dipisahkan dari bindEvents() karena hanya bagian inilah yang benar-benar
- * berubah saat operator mengetik.
- */
+/** Dipasang ulang tiap kali isi kotak saran berganti — hanya bagian inilah
+ *  yang berubah saat operator mengetik. */
 function bindSuggestions(root) {
   root.querySelectorAll("[data-add-po]").forEach((button) => {
     button.addEventListener("click", () => {
       const poNumber = button.dataset.addPo;
-      // Baris master datang bersama hasil pencarian, jadi tidak perlu dicari
-      // ulang di salinan lokal yang kini sudah tidak ada.
-      //
-      // Angkanya disimpan HANYA untuk ditampilkan di layar. Yang dikirim saat
-      // submit tinggal nomor PO-nya: server membaca ulang vendor, jumlah, dan
-      // SKU dari master gudang itu sendiri, sehingga angka yang tercatat tidak
-      // pernah bergantung pada apa yang kebetulan ada di memori tablet.
+      // Angkanya disimpan HANYA untuk ditampilkan. Yang dikirim saat submit
+      // tinggal nomor PO-nya: server membaca ulang vendor, jumlah, dan SKU dari
+      // master gudangnya sendiri.
       const master = suggestions.find((po) => po.po_number === poNumber);
       form.pos.push({
         po_number: poNumber,
@@ -547,23 +539,32 @@ function bindSuggestions(root) {
   });
 }
 
+/** SELURUH masalah sekaligus: berhenti pada yang pertama memaksa operator
+ *  menemukan sisanya lewat percobaan berulang, satu kirim per medan. */
 function validate() {
   const plate = normalizePlate(form.plate.prefix, form.plate.number, form.plate.suffix);
-  if (!form.arrivedAt) return "Jam kedatangan wajib diisi.";
-  if (new Date(form.arrivedAt).getTime() > Date.now() + 60000) {
-    return "Jam kedatangan tidak boleh melewati waktu sekarang.";
+  const found = {};
+  if (!form.arrivedAt) found.arrivedAt = "Jam kedatangan wajib diisi.";
+  else if (new Date(form.arrivedAt).getTime() > Date.now() + 60000) {
+    found.arrivedAt = "Jam kedatangan tidak boleh melewati waktu sekarang.";
   }
-  if (!form.fleet) return "Tipe armada wajib dipilih.";
-  if (!plate) return "Plat nomor wajib diisi.";
-  if (!isValidPlate(plate)) return "Format plat nomor belum benar. Contoh: B 1234 XYZ.";
-  if (!form.pos.length) return "Minimal satu PO wajib dipilih.";
-  return "";
+  if (!plate) found.plate = "Plat nomor wajib diisi.";
+  else if (!isValidPlate(plate)) found.plate = "Format plat nomor belum benar. Contoh: B 1234 XYZ.";
+  if (!form.pos.length) found.pos = "Minimal satu PO wajib dipilih.";
+  return found;
 }
 
 async function submit(root, button) {
-  const problem = validate();
-  if (problem) {
-    toast(problem, "error");
+  problems = validate();
+  const keys = Object.keys(problems);
+  if (keys.length) {
+    // Medannya ditandai, lalu fokus dan pandangan dibawa ke yang pertama.
+    // Toast tetap ada sebagai ringkasan, bukan sebagai satu-satunya pemberitahu.
+    render(root);
+    const first = root.querySelector(FIELD_ANCHOR[keys[0]]);
+    first?.focus({ preventScroll: true });
+    first?.scrollIntoView({ block: "center", behavior: "smooth" });
+    toast(keys.length === 1 ? problems[keys[0]] : `${keys.length} isian belum benar.`, "error");
     return;
   }
 

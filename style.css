@@ -166,16 +166,23 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Fokus keyboard selalu terlihat: kontras 3px di luar batas kontrol supaya
-   tidak tertutup border milik kontrol itu sendiri. */
+/* Fokus keyboard selalu terlihat: 3px di luar batas kontrol supaya tidak
+   tertutup border milik kontrol itu sendiri.
+
+   Cincinnya PEKAT, bukan 42% tembus pandang. Yang lama menghasilkan
+   rgb(56,84,133) di atas permukaan gelap — 2,3:1 terhadap latarnya, di bawah
+   lantai 3:1 yang diminta WCAG 2.2 (1.4.11). Lapisan kedua berwarna latar di
+   dalamnya menjaga cincin tetap terbaca di atas permukaan mana pun. */
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
+summary:focus-visible,
 [tabindex]:focus-visible {
-  outline: 3px solid color-mix(in oklab, var(--accent) 42%, transparent);
+  outline: 3px solid var(--accent);
   outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--bg);
 }
 
 a {
@@ -441,15 +448,29 @@ kbd,
 }
 
 .sidebar.rail .nav-link {
+  position: relative;
   justify-content: center;
   padding-inline: 8px;
 }
 
+/* Lencana antrean TIDAK ikut disembunyikan: ia dulu ada di daftar ini bersama
+   label teksnya, sehingga menciutkan menu — yang dilakukan supervisor justru
+   untuk meluaskan papan — ikut membuang hitungan truk menunggu. */
 .sidebar.rail .nav-link span,
-.sidebar.rail .nav-link b,
 .sidebar.rail .brand-mark > span:last-child,
 .sidebar.rail .sidebar-user {
   display: none;
+}
+
+.sidebar.rail .nav-link b {
+  position: absolute;
+  top: 2px;
+  right: 10px;
+  display: grid;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  place-items: center;
 }
 
 .sidebar-foot {
@@ -662,6 +683,73 @@ kbd {
 
 .dashboard-grid-main {
   grid-template-columns: minmax(0, 1.65fr) minmax(300px, 0.75fr);
+  /* Kolom TIDAK diregangkan menyamai tetangganya. `stretch` adalah bawaan grid,
+     dan pada kolom yang berbeda panjang ia menghasilkan kartu berisi udara —
+     di Pengaturan, kartu setinggi 370px diregangkan menjadi 1.875px. */
+  align-items: start;
+}
+
+/* --------------------------------------------------------------------------
+ * Kisi Pengaturan
+ *
+ * Pengaturan bukan "satu kolom utama dan satu pendamping" seperti Pendaftaran:
+ * isinya kartu setara yang panjangnya berbeda. Kisi 1,65 : 0,75 menaruh satu
+ * kartu pendek di kolom lebar dan menjejalkan enam sisanya ke kolom 334 piksel,
+ * tempat judul "Cookie sesi Superset" pecah dua baris dan peringatannya sepuluh.
+ * ----------------------------------------------------------------------- */
+.settings-grid {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+  /* `min(100%, 320px)`, bukan 320px polos: di kolom yang lebih sempit daripada
+     320px, lantai polos memaksa kisinya meluber keluar layar. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  align-items: start;
+}
+
+/* Tabel acuan SLA: satu-satunya isi halaman ini yang menuntut lebar penuh. */
+.settings-grid > .settings-wide {
+  grid-column: 1 / -1;
+}
+
+/* Kartu cookie membawa kotak isian dan peringatan berparagraf; pada satu kolom
+   sempit keduanya menjadi pita teks setinggi sepuluh baris. */
+@media (min-width: 760px) {
+  .settings-grid > .settings-span {
+    grid-column: span 2;
+  }
+}
+
+/* Tiga pilihan tema setara, jadi kolomnya sama lebar. Dengan fleks, "Ikut
+   sistem" dua kali lebih lebar daripada "Gelap" dan ketiganya terbaca sebagai
+   tiga hal yang berbeda bobot. */
+.theme-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.theme-picker .btn {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+/* Isian dan peringatan berdampingan ketika kartunya lebar, sehingga peringatan
+   setinggi sepuluh baris tidak mendorong tombol Simpan keluar dari pandangan. */
+@media (min-width: 900px) {
+  .settings-span .section-body > .dashboard-page {
+    display: grid;
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 20px;
+  }
+
+  .settings-span .section-body > .dashboard-page > .cookie-note {
+    grid-row: 1 / span 4;
+    grid-column: 2;
+    margin: 0;
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -861,6 +949,17 @@ select.input {
   background: color-mix(in oklab, var(--status-critical) 6%, var(--surface));
 }
 
+/* Penanda medan wajib: empat dari delapan isian pendaftaran wajib, jadi yang
+   ditandai adalah yang wajib. */
+.req {
+  color: var(--status-critical);
+  font-weight: 700;
+}
+
+.req-legend {
+  color: var(--text-muted);
+}
+
 .field-error {
   display: flex;
   align-items: center;
@@ -958,6 +1057,28 @@ select.input {
 .filter-bar .table-actions {
   flex: 0 0 auto;
   margin-left: auto;
+}
+
+/* Jumlah hasil: keterangan, bukan kontrol. Sebagai `.chip` setinggi 22px berisi
+   huruf 10px, bingkainya menjanjikan sesuatu yang dapat ditekan — padahal ia
+   satu-satunya penanda bahwa papan sedang menyembunyikan tiket. */
+.filter-count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-bottom: 9px;
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Keadaan kosong yang menyebutkan sebabnya harus menyebutkan jalan keluarnya. */
+.empty-action {
+  display: flex;
+  justify-content: center;
+  margin-top: -8px;
+  padding-bottom: 18px;
 }
 
 .chip,
@@ -1135,11 +1256,48 @@ select.input {
   font-size: 12px;
 }
 
+/* Tabel riwayat membawa tiga belas kolom; pada laptop 1366 dua ratus empat puluh
+   tujuh piksel di antaranya berada di luar pandangan — termasuk vonis SLA, satu-
+   satunya alasan tabel ini dibuka. Bayangan di tepi kanan menandai bahwa
+   gulungan itu ada; kolom pertama yang tidak ikut tergulir menjaga baris yang
+   sedang dibaca tetap bernama. */
 .table-scroll {
+  position: relative;
   min-width: 0;
   max-width: 100%;
   overflow: auto;
   scrollbar-gutter: stable;
+  /* Bayangan menghilang di ujung gulungan: `local` menempel pada isi yang
+     tergulir, `scroll` pada kotaknya, dan pasangannya saling menutup. */
+  background:
+    linear-gradient(to left, var(--surface), transparent 24px) right / 24px 100% no-repeat local,
+    linear-gradient(to left, color-mix(in oklab, var(--text) 22%, transparent), transparent 12px)
+      right / 12px 100% no-repeat scroll;
+}
+
+/* Hanya tabel yang memang menggulir memakai kelas ini. */
+.tbl-sticky th:first-child,
+.tbl-sticky td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+
+.tbl-sticky thead th:first-child {
+  z-index: 3;
+}
+
+/* Batas kolom beku, supaya isi yang lewat di belakangnya tidak terbaca menyatu. */
+.tbl-sticky th:first-child::after,
+.tbl-sticky td:first-child::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+  content: "";
 }
 
 .tbl th,
@@ -1424,6 +1582,20 @@ select.input {
   font-size: clamp(28px, 4vw, 40px);
 }
 
+/* Tiket yang belum mulai bongkar TIDAK memakai ukuran hitung mundur: dalam
+   empat puluh piksel, "Target 2 jam" yang diam terbaca sama mendesaknya dengan
+   "+48:55" yang berdetak di kartu sebelahnya. */
+.sla-hero.sla-idle .sla-value,
+.sla-hero.sla-none .sla-value {
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.sla-hero.sla-idle,
+.sla-hero.sla-none {
+  border-style: dashed;
+}
+
 .sla-hero.sla-breached {
   border-color: color-mix(in oklab, var(--status-critical) 45%, var(--line));
   background: color-mix(in oklab, var(--status-critical) 9%, var(--surface));
@@ -1508,7 +1680,11 @@ select.input {
   gap: 2px;
 }
 
-.fact span {
+/* Selektor anak LANGSUNG. `.fact span` dulu juga mengenai `<span class="mono">`
+   yang dipasang `elapsedMarkup()` DI DALAM `<strong>`, sehingga lama tunggu
+   driver — satu-satunya angka di kartu yang bergerak tiap detik — digambar
+   memakai gaya LABEL: 9px, huruf besar, redup. */
+.fact > span {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 9px;
@@ -1525,9 +1701,20 @@ select.input {
   white-space: nowrap;
 }
 
-.fact strong.mono {
+.fact strong.mono,
+.fact strong .mono {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* Pembungkus di dalam `<strong>` mewarisi ukuran dan bobot induknya, jadi
+   pembungkus berikutnya tidak mengulang cacat di atas. */
+.fact strong > * {
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: none;
 }
 
 /* Aksi kartu. Kolomnya MEMBUNGKUS, tidak dipaksa berjajar.
@@ -1589,19 +1776,28 @@ select.input {
   background: color-mix(in oklab, var(--status-critical) 6%, var(--surface));
 }
 
+/* Pratinjau plat — KETERANGAN, bukan medan keempat. Bingkai 2px dan latar
+   permukaan membuatnya terbaca sebagai kotak isian yang menolak diketik: ia
+   berdiri di bawah tiga kotak plat, seukuran mereka. */
 .plate-preview {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-height: 34px;
-  padding: 4px 12px;
-  border: 2px solid var(--text);
-  border-radius: 7px;
-  background: var(--surface-muted);
+  gap: 8px;
+  min-height: 22px;
+  color: var(--text-soft);
   font-family: var(--font-mono);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.12em;
+}
+
+.plate-preview::before {
+  content: "Tersimpan sebagai";
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 /* Daftar PO terpilih pada form pendaftaran.
@@ -2016,22 +2212,17 @@ select.input {
    kesembilan menggantung sendirian — merusak satu-satunya hal yang membuat
    komponen ini berarti, yaitu bahwa ia menggambar bangunannya.
 
-   Di layar sempit ia menggulir mendatar, seperti berjalan menyusuri dinding. */
+   SEMBILAN PINTU HARUS MUAT SEKALIGUS, dan sebelumnya tidak pernah muat:
+   `minmax(116px, 1fr)` menuntut 1.108 piksel sementara ruang kerja menyediakan
+   1.071px pada laptop 1366 dan 985px pada 1280. Rel yang menjawab "dok mana
+   yang kosong" dengan satu dok tersembunyi menjawab salah, jadi jumlah kolom
+   kini mengikuti `--dock-count` yang dipasang dockRail(). */
 .dock-rail {
   display: grid;
-  grid-auto-flow: column;
-  /* Lantai 96px dulu terlalu sempit untuk isinya sendiri: nomor dok setinggi
-     20px ditambah label keadaan ("Lewat SLA", "Bongkar") tidak muat pada satu
-     baris, sehingga labelnya terpotong tepi ubin — ubin memakai
-     `overflow: hidden` — atau membungkus dan membuat satu ubin lebih tinggi
-     daripada delapan tetangganya. Rel ini memang menggulir mendatar; melebarkan
-     ubinnya tidak menyembunyikan apa pun. */
-  grid-auto-columns: minmax(116px, 1fr);
+  grid-template-columns: repeat(var(--dock-count, 9), minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 4px;
-  overflow-x: auto;
   padding-bottom: 2px;
-  scrollbar-width: thin;
 }
 
 .dock {
@@ -2047,11 +2238,13 @@ select.input {
   transition: border-color var(--motion-base) var(--ease);
 }
 
+/* Nomor dan keadaan BERTUMPUK: berjajar, keduanya berebut satu baris selebar
+   ubin dan yang mengalah adalah labelnya — "LEWAT S…", justru keadaan yang
+   paling mendesak dibaca. */
 .dock-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px;
+  display: grid;
+  gap: 1px;
+  min-width: 0;
 }
 
 .dock-no {
@@ -2065,14 +2258,15 @@ select.input {
   color: var(--text);
 }
 
-/* Label keadaan mengalah lebih dulu ketika ruangnya habis. Tanpa `min-width: 0`
-   anak fleks menolak menyusut di bawah lebar teksnya, jadi ellipsis-nya tidak
-   pernah berlaku dan teksnya terpotong tepi ubin. */
+/* Keadaan dibawa WARNA TEKSNYA, bukan hanya garis tepi setebal satu piksel:
+   sebelumnya "KOSONG" dan "LEWAT SLA" sama-sama redup dan terlihat identik
+   sampai dibaca. Teksnya tetap ada, jadi isyaratnya bukan warna saja. */
 .dock-state {
   overflow: hidden;
   min-width: 0;
   color: var(--text-muted);
   font-size: 10px;
+  font-weight: 700;
   letter-spacing: 0.06em;
   text-overflow: ellipsis;
   text-transform: uppercase;
@@ -2129,13 +2323,15 @@ select.input {
 }
 
 .dock-free .dock-no { color: color-mix(in oklab, var(--dock-free) 70%, var(--text)); }
-.dock-free .dock-state { color: color-mix(in oklab, var(--dock-free) 75%, var(--text-muted)); }
+.dock-free .dock-state { color: color-mix(in oklab, var(--dock-free) 80%, var(--text-muted)); }
 
 .dock-busy { border-color: color-mix(in oklab, var(--dock-busy) 40%, var(--line)); }
 .dock-busy .dock-bar i { background: var(--dock-busy); }
+.dock-busy .dock-state { color: var(--dock-busy); }
 
 .dock-warn { border-color: color-mix(in oklab, var(--dock-warn) 55%, var(--line)); }
 .dock-warn .dock-bar i { background: var(--dock-warn); }
+.dock-warn .dock-state { color: var(--dock-warn); }
 
 .dock-late {
   border-color: color-mix(in oklab, var(--dock-late) 60%, var(--line));
@@ -2144,6 +2340,7 @@ select.input {
 
 .dock-late .dock-bar i { background: var(--dock-late); }
 .dock-late .dock-no { color: var(--dock-late); }
+.dock-late .dock-state { color: var(--dock-late); }
 
 .dock-count {
   font-family: var(--font-mono);
@@ -2277,11 +2474,13 @@ select.input {
   gap: 9px;
 }
 
+/* Label, bar, dan angka berdempet — bukan bar 90px yang terdampar di tepi kanan
+   dengan pita kosong selebar empat ratus piksel di antaranya. */
 .reason {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 90px 34px;
+  grid-template-columns: minmax(0, 14em) minmax(0, 1fr) 34px;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   font-size: 13px;
 }
 
@@ -2299,7 +2498,8 @@ select.input {
 
 @media (max-width: 900px) {
   .reason {
-    grid-template-columns: minmax(0, 1fr) 60px 30px;
+    grid-template-columns: minmax(0, 9em) minmax(0, 1fr) 30px;
+    gap: 8px;
     font-size: 12px;
   }
 
@@ -2593,6 +2793,14 @@ select.input {
   .form-grid,
   .form-grid-three {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Kisi yang isinya FAKTA, bukan isian, tetap dua kolom. Satu kolom benar untuk
+     kotak isian — mereka butuh lebar penuh — tetapi pasangan label/nilai pendek
+     seperti "Tiket dimuat 12" lalu memakan satu baris penuh masing-masing:
+     empat fakta menjadi 232 piksel untuk empat angka. */
+  .form-grid:not(:has(input, select, textarea)) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .form-grid .span-2,
@@ -3029,32 +3237,26 @@ select.input {
   }
 
   /* -- Metrik -------------------------------------------------------------
-     Empat kartu 2x2 menjadi satu baris pil yang menggulir. Angkanya tetap
-     terbaca; yang hilang hanya bidang kosong di sekelilingnya. */
+     DUA BARIS DUA KOLOM, bukan satu baris yang menggulir. Empat kolom 138px
+     berarti 576 piksel isi di layar 357 piksel: "Mendekati SLA" dan "Terlambat"
+     — kedua angka yang menjadi alasan papan ini dibuka — berada di luar layar.
+     Lebar tetap itu masuk akal ketika kartunya masih tiga baris; keterangannya
+     kini disembunyikan, jadi dua kolom memberi 175 piksel per kartu. */
   .metric-strip,
   .metric-strip-three,
   .metric-strip-four {
     display: grid;
-    grid-auto-flow: column;
-    /* Lebar TETAP, bukan minmax dengan 1fr. Di dalam wadah yang menggulir,
-       `1fr` justru memeras kolom ke bawah lantai minimumnya, dan labelnya
-       terpotong menjadi "ME" dan "DI" — dua kata yang tidak berarti apa pun. */
-    /* `grid-template-columns` HARUS dinolkan lebih dulu.
-
-       Aturan desktop `.metric-strip-four` mendefinisikan empat kolom EKSPLISIT
-       `minmax(0, 1fr)`. Kolom eksplisit selalu menang atas `grid-auto-columns`,
-       yang hanya berlaku bagi kolom implisit — jadi tanpa baris ini keempat
-       kartu tetap diperas ke 83 piksel dan labelnya terpotong menjadi "ME" dan
-       "DI", dua kata yang tidak berarti apa pun. */
-    grid-template-columns: none;
-    grid-auto-columns: 138px;
-    gap: 8px;
-    overflow-x: auto;
-    scrollbar-width: none;
+    /* Blok 720px di atas sudah menyatakan dua kolom beserta pemisahnya; yang
+       dibatalkan di sini hanya bentuk menggulir yang dulu menempatinya. */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: row;
+    gap: 0;
+    overflow-x: visible;
   }
 
-  .metric-strip::-webkit-scrollbar {
-    display: none;
+  /* Pemisah bawah pada baris pertama, supaya kisi 2x2 terbaca sebagai kisi. */
+  .metric-strip .metric-card:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
   }
 
   /* Tinggi minimum ikut turun bersama isinya: 108px dipilih ketika kartu masih
@@ -3108,6 +3310,19 @@ select.input {
     justify-content: flex-start;
   }
 
+  /* Ringkasan filter dan jumlah hasil berbagi satu baris: masing-masing
+     sendirian memakan satu baris penuh untuk dua kata. */
+  .filter-more {
+    flex: 1 1 auto;
+  }
+
+  .filter-bar .filter-count {
+    flex: 0 0 auto;
+    margin-left: auto;
+    padding-bottom: 0;
+    align-self: center;
+  }
+
   /* -- Kartu antrean ------------------------------------------------------
      Dirapatkan tanpa mengecilkan dua hal yang harus terbaca dari jauh: nomor
      antrean dan hitung mundur. */
@@ -3129,11 +3344,18 @@ select.input {
   }
 
   /* -- Rel dok ------------------------------------------------------------
-     Ubin lebih sempit supaya lebih banyak pintu terlihat sekaligus sebelum
-     perlu menggulir. */
+     Di bawah 900px rel kembali menggulir: sembilan pintu dibagi pada layar
+     390px menghasilkan ubin selebar 36 piksel yang tidak memuat apa pun. */
   .dock-rail {
-    grid-auto-columns: minmax(108px, 1fr);
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(112px, 1fr);
     gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    /* Ubin terakhir tidak berhenti persis di tepi layar: sisa ruang di kanan
+       adalah satu-satunya petunjuk bahwa masih ada pintu di baliknya. */
+    scroll-padding-inline: 12px;
   }
 
   .dock {

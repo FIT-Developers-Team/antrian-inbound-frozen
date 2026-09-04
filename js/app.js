@@ -149,8 +149,11 @@ function navMarkup(role) {
       // disembunyikan begitu ikut hilang dari pohon aksesibilitas, sementara
       // ikonnya sendiri `aria-hidden`. Tanpa baris ini kelima tombol navigasi
       // dibacakan sebagai "tombol" tanpa nama sama sekali.
+      // `title` melengkapi `aria-label` untuk mata, bukan menggantikannya:
+      // dalam menu terciut tombolnya tinggal ikon, dan tidak ada satu pun cara
+      // bagi pemakai tetikus untuk memastikan mana yang mana sebelum menekannya.
       return `<button type="button" class="nav-link${key === activePage ? " active" : ""}"
-        data-page="${key}" aria-label="${esc(page.label)}"${key === activePage ? ' aria-current="page"' : ""}>
+        data-page="${key}" aria-label="${esc(page.label)}" title="${esc(page.label)}"${key === activePage ? ' aria-current="page"' : ""}>
         ${icon(page.icon)}<span>${esc(page.label)}</span>${count}
       </button>`;
     })

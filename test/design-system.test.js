@@ -218,8 +218,20 @@ test("hanya ada satu berkas gaya dan ukurannya wajar", () => {
   // label grafik ponsel, dan `scroll-margin-top` supaya judul halaman tidak
   // bersembunyi di balik topbar. Sifatnya tidak berubah: satu berkas, tanpa
   // framework, tanpa kelas yang dibangkitkan.
+  //
+  // Naik dari 78 KB ke 86 KB setelah audit UI/UX menyeluruh. Yang bertambah,
+  // satu per satu: `.settings-grid` beserta dua pengubahnya (menggantikan kisi
+  // 1,65 : 0,75 yang meregangkan satu kartu setinggi 370px menjadi 1.875px),
+  // `.theme-picker`, `.filter-count` dan `.empty-action` (menggantikan chip
+  // jumlah hasil yang berpura-pura menjadi tombol), tata letak dua kolom untuk
+  // kartu cookie, nada warna keadaan pada ubin dok, kisi 2x2 metrik ponsel,
+  // `.tbl-sticky` beserta bayangan tepi gulungan pada `.table-scroll`, ukuran
+  // tersendiri untuk hero SLA yang belum berdetak, lencana antrean pada menu
+  // terciut, dan penanda medan wajib beserta gaya galat sebaris pada formulir
+  // pendaftaran. Sifatnya tetap: satu berkas, tanpa framework, tanpa kelas yang
+  // dibangkitkan.
   const bytes = Buffer.byteLength(css, "utf8");
-  assert.ok(bytes < 78_000, `style.css harus tetap ramping, sekarang ${bytes} byte`);
+  assert.ok(bytes < 86_000, `style.css harus tetap ramping, sekarang ${bytes} byte`);
   assert.equal((html.match(/rel="stylesheet"/g) || []).length, 2, "hanya font Google dan style.css");
 });
 

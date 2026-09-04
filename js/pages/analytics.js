@@ -176,7 +176,7 @@ function vendorTable(rows) {
   const maxMinutes = Math.max(...rows.map((row) => row.dock_minutes || 0), 1);
 
   return `<div class="table-scroll">
-    <table class="tbl">
+    <table class="tbl tbl-sticky">
       <thead><tr>
         <th>Vendor</th><th class="numeric">Tiket</th><th>Waktu dok</th>
         <th class="numeric">Tunggu</th><th class="numeric">Bongkar p50</th><th class="numeric">p90</th>
@@ -229,6 +229,10 @@ function gateChart(gateRows) {
     // sembarang. Dalam jam, garisnya jatuh pada kelipatan bulat.
     valueOf: (row) => Math.round(((row.dock_minutes || 0) / 60) * 10) / 10,
     labelOf: (row) => row.gate.slice(-2),
+    // Setiap pintu diberi nama. Penjarangan bawaan menyisakan "01, 03, 05, 07,
+    // 09" dan membuat empat batang lainnya tidak dapat dikenali — padahal
+    // "pintu mana" adalah satu-satunya pertanyaan yang dijawab grafik ini.
+    maxLabels: gateRows.length,
     tipOf: (row) =>
       `${row.gate} — ${row.tickets} tiket, ${formatMinutes(row.dock_minutes)} terpakai` +
       (row.unload_p50 ? `, median ${formatMinutes(row.unload_p50)}` : ""),
@@ -248,7 +252,7 @@ function cancellationList(reasons) {
     ${reasons
       .map(
         (reason) => `<div class="reason">
-          <span class="reason-label">${esc(reason.reason)}</span>
+          <span class="reason-label" title="${esc(reason.reason)}">${esc(reason.reason)}</span>
           <span class="bar-track"><i class="is-critical" style="width:${(reason.tickets / total) * 100}%"></i></span>
           <b class="mono">${esc(reason.tickets)}</b>
         </div>`,

@@ -44,10 +44,15 @@ export function slaState(row = {}, now = new Date()) {
   }
 
   // Bongkar belum dimulai: tenggat belum ada karena jam mulainya belum ada.
+  //
+  // Labelnya menyebut "Target" secara harfiah. Tanpa kata itu, slot yang biasa
+  // menampung hitung mundur menampilkan "2 jam" — angka diam yang, di tempat
+  // dan ukuran yang sama dengan "+48:55", terbaca sebagai waktu yang sedang
+  // berjalan.
   if (!started || !deadline) {
     return {
       phase: "idle",
-      label: `${targetHours} jam`,
+      label: `Target ${targetHours} jam`,
       note: "Menunggu mulai bongkar",
       seconds: 0,
     };

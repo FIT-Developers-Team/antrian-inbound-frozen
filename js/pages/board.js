@@ -53,12 +53,9 @@ const wideFilters = onBreakpoint("(min-width: 721px)", (wide) => {
 });
 
 /* --------------------------------------------------------------------------
- * Rel dok
- *
- * Sembilan pintu inbound adalah batas fisik gudang ini: berapa pun panjang
- * antrean di luar, sembilan adalah jumlah truk yang dapat dibongkar bersamaan.
- * Memetakan gate ke penghuninya menjawab pertanyaan yang paling sering
- * ditanyakan supervisor tanpa membaca satu kartu pun.
+ * Rel dok — bentuk visualnya ada di dockRail() (js/ui.js); di sini hanya
+ * pemetaan gate ke penghuninya, yang menjawab pertanyaan tersering supervisor
+ * tanpa membaca satu kartu pun.
  * ----------------------------------------------------------------------- */
 function buildDocks(rows) {
   const now = new Date();
@@ -141,6 +138,17 @@ function filterSummary() {
   return parts.length ? parts.join(" · ") : "Semua aktif";
 }
 
+/* "9 tiket" saja tidak dapat dibedakan dari "9 tiket, dan tidak ada yang lain" —
+   selisih antara "sepi" dan "ada yang tidak Anda lihat". */
+function countLabel(visible, total) {
+  return visible === total ? `${visible} tiket` : `${visible} dari ${total} tiket`;
+}
+
+/** Apakah ada filter yang sedang menyembunyikan sesuatu. */
+function filtersActive() {
+  return Boolean(filters.query.trim()) || filters.status !== "AKTIF" || Boolean(filters.gate);
+}
+
 function applyFilters(rows) {
   const query = filters.query.trim().toLowerCase();
   return rows.filter((row) => {
@@ -221,8 +229,7 @@ export function render(root) {
         (gate) =>
           `<option value="${esc(gate)}"${filters.gate === gate ? " selected" : ""}>${esc(gateLabel(gate))}</option>`,
       ),
-    )
-    .join("");
+    ).join("");
 
   root.innerHTML = `<div class="dashboard-page">
     ${pageHeader({
@@ -247,18 +254,7 @@ export function render(root) {
                value="${esc(filters.query)}" />
       </label>
 
-      <!--
-        Status dan gate berada di dalam disclosure.
-
-        Di layar lebar CSS memaksanya terbuka dan sejajar, persis seperti
-        sebelumnya. Di ponsel ia terlipat: bilah filter yang selalu terbuka
-        memakan 192 piksel — hampir seperempat layar — untuk dua medan yang
-        pada sebagian besar shift tidak pernah disentuh, sementara yang
-        dicari operator justru tiket di bawahnya.
-
-        Ringkasan pada ringkasannya menyebutkan filter yang sedang aktif,
-        sehingga menutupnya tidak pernah menyembunyikan keadaan.
-      -->
+      <!-- Terlipat di ponsel; ringkasannya menyebutkan filter yang aktif. -->
       <details class="filter-more"${wideFilters() || filters.status !== "AKTIF" || filters.gate ? " open" : ""}>
         <summary>
           <span>Filter</span>
@@ -276,9 +272,10 @@ export function render(root) {
         </div>
       </details>
 
-      <div class="table-actions">
-        <span class="chip" id="board-count">${visible.length} tiket</span>
-      </div>
+      <!-- Jumlah hasil BUKAN chip: sebagai chip ia terlihat seperti kontrol
+           yang tidak melakukan apa-apa. aria-live membuatnya ikut dibacakan. -->
+      <p class="filter-count" id="board-count" role="status" aria-live="polite"
+        >${esc(countLabel(visible.length, rows.length))}</p>
     </div>
 
     <div id="board-list">${listMarkup(visible)}</div>
@@ -289,9 +286,25 @@ export function render(root) {
 
 function listMarkup(visible) {
   if (!visible.length) {
+    if (store.state.loading) return emptyState("Memuat antrean…");
+
+    // "Tidak ada yang cocok" dan "belum ada apa-apa" adalah dua keadaan berbeda
+    // yang dulu memakai kalimat sama: operator yang salah ketik satu huruf
+    // diberi tahu bahwa gudangnya sepi — salah, dan tanpa jalan kembali.
+    if (filtersActive()) {
+      const query = filters.query.trim();
+      return `${emptyState(
+        "Tidak ada tiket yang cocok",
+        `Filter aktif: ${filterSummary()}${query ? ` · pencarian "${query}"` : ""}.`,
+      )}
+      <div class="empty-action">
+        <button type="button" class="btn" data-action="clear-filters">${icon("x", 16)} Hapus filter</button>
+      </div>`;
+    }
+
     return emptyState(
-      store.state.loading ? "Memuat antrean…" : "Belum ada antrean",
-      store.state.loading ? "" : "Tiket baru muncul di sini begitu Security mendaftarkan kedatangan.",
+      "Belum ada antrean",
+      "Tiket baru muncul di sini begitu Security mendaftarkan kedatangan.",
     );
   }
 
@@ -304,7 +317,9 @@ function listMarkup(visible) {
   const sections = GROUPS.map(([status, label]) => {
     const rows = visible.filter((row) => String(row.status || "").toUpperCase() === status);
     if (!rows.length) return "";
-    return `<p class="queue-group">${esc(label)} <b>${rows.length}</b></p>
+    // `<h2>`, bukan `<p>`: sebagai paragraf ketiga kelompok ini tidak pernah
+    // masuk ke pohon judul, sehingga seluruh papan hanya punya satu judul.
+    return `<h2 class="queue-group">${esc(label)} <b>${rows.length}</b></h2>
       <div class="board-grid">${rows.map(queueCard).join("")}</div>`;
   }).join("");
 
@@ -312,7 +327,7 @@ function listMarkup(visible) {
     (row) => !GROUPS.some(([status]) => status === String(row.status || "").toUpperCase()),
   );
   const rest = others.length
-    ? `<p class="queue-group">Lainnya <b>${others.length}</b></p>
+    ? `<h2 class="queue-group">Lainnya <b>${others.length}</b></h2>
        <div class="board-grid">${others.map(queueCard).join("")}</div>`
     : "";
 
@@ -333,8 +348,9 @@ function renderList(root) {
   const list = root.querySelector("#board-list");
   if (list) list.innerHTML = listMarkup(visible);
   const count = root.querySelector("#board-count");
-  if (count) count.textContent = `${visible.length} tiket`;
+  if (count) count.textContent = countLabel(visible.length, store.state.rows.length);
   bindTicketActions(root);
+  bindClearFilters(root);
 }
 
 /**
@@ -388,6 +404,17 @@ function bindEvents(root) {
   );
 
   bindTicketActions(root);
+  bindClearFilters(root);
+}
+
+/** Jalan keluar dari papan yang tersaring kosong. Dipasang ulang bersama
+ *  daftarnya: tombolnya hidup di dalam keadaan kosong itu sendiri. */
+function bindClearFilters(root) {
+  root.querySelector('[data-action="clear-filters"]')?.addEventListener("click", () => {
+    Object.assign(filters, { query: "", status: "AKTIF", gate: "" });
+    render(root);
+    root.querySelector("#board-query")?.focus();
+  });
 }
 
 function bindTicketActions(root) {

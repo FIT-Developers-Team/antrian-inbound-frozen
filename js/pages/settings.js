@@ -173,6 +173,9 @@ function cookieSection(user) {
   return section({
     eyebrow: "Kredensial",
     title: "Cookie sesi Superset",
+    // Satu kotak isian dan satu peringatan berparagraf; pada kolom selebar 320
+    // piksel keduanya menjadi pita teks setinggi sepuluh baris.
+    className: "settings-span",
     action: present
       ? badge(`${status.length} karakter · ${status.fingerprint}`, "normal")
       : badge("Belum diisi", "critical"),
@@ -208,7 +211,7 @@ function cookieSection(user) {
 
       <p class="sync-result" id="cookie-result" hidden></p>
 
-      <div class="banner banner-warn">
+      <div class="banner banner-warn cookie-note">
         <strong>${icon("alert", 16)} Tersimpan di database</strong>
         <p>
           Berbeda dari variabel lingkungan, nilai ini ikut tersimpan di Postgres dan ikut
@@ -237,99 +240,102 @@ export function render(root) {
       description: "Gudang yang sedang dipantau, tampilan, dan acuan target SLA.",
     })}
 
-    <div class="dashboard-grid dashboard-grid-main">
-      <div class="dashboard-page">
-        ${section({
-          eyebrow: "Acuan",
-          title: "Target SLA bongkar",
-          body: `<div class="table-scroll">
-            <table class="tbl">
-              <thead><tr><th>Armada</th><th>Target</th><th>Catatan</th></tr></thead>
-              <tbody>${FLEET_TYPES.map(
-                (fleet) => `<tr>
-                  <td><strong>${esc(fleet.label)}</strong></td>
-                  <td class="numeric">${esc(fleet.slaHours)} jam</td>
-                  <td class="cell-wrap">${esc(fleet.note)}${
-                    SKU_TIERED_FLEETS.includes(fleet.value)
-                      ? ' <span class="chip">2 jam sampai 40 SKU, 4 jam di atas 40</span>'
-                      : ""
-                  }</td>
-                </tr>`,
-              ).join("")}</tbody>
-            </table>
+    <!--
+      Urutannya mengikuti SEBERAPA SERING kartunya disentuh, bukan urutan
+      berkasnya. Gudang aktif dan tema adalah dua hal yang benar-benar diubah
+      operator; kesegaran sumber dibaca ketika ada yang terasa salah; tabel
+      acuan SLA dibuka beberapa kali setahun — jadi ia turun ke dasar halaman,
+      di mana lebar penuh yang memang dibutuhkannya tidak menghalangi apa pun.
+    -->
+    <div class="settings-grid">
+      ${section({
+        eyebrow: "Lokasi",
+        title: "Gudang aktif",
+        body:
+          sites.length > 1
+            ? `<label>
+                 <span>Gudang dipantau</span>
+                 <select class="input" id="site-select">
+                   ${sites
+                     .map(
+                       (item) =>
+                         `<option value="${esc(item.code)}"${item.code === site?.code ? " selected" : ""}>
+                            ${esc(item.name)} (${esc(item.code)})
+                          </option>`,
+                     )
+                     .join("")}
+                 </select>
+                 <small>Seluruh halaman — papan, pendaftaran, laporan — ikut berpindah.</small>
+               </label>`
+            : `<p>Gudang aktif: <strong>${esc(site?.name || "-")}</strong> ${chip(site?.code || "-")}</p>
+               <p class="section-note">
+                 Gudang lain diaktifkan dari database (<code>site_master.active</code>), tanpa deploy ulang.
+               </p>`,
+      })}
+
+      ${refreshSection()}
+
+      ${sourceSection()}
+
+      ${cookieSection(user)}
+
+      ${section({
+        eyebrow: "Tampilan",
+        title: "Tema",
+        body: `<div class="theme-picker" role="group" aria-label="Pilihan tema">
+          ${["light", "dark", "system"]
+            .map(
+              (mode) =>
+                `<button type="button" class="btn${currentTheme() === mode ? " btn-primary" : ""}"
+                   data-theme="${mode}" aria-pressed="${currentTheme() === mode}">
+                   ${mode === "light" ? icon("sun", 16) : mode === "dark" ? icon("moon", 16) : icon("settings", 16)}
+                   ${mode === "light" ? "Terang" : mode === "dark" ? "Gelap" : "Ikut sistem"}
+                 </button>`,
+            )
+            .join("")}
+        </div>
+        <p class="section-note">"Ikut sistem" mengikuti setelan perangkat, sehingga tablet yang
+          beralih ke mode gelap pada malam hari tidak menyilaukan operator shift malam.</p>`,
+      })}
+
+      ${section({
+        eyebrow: "Sesi",
+        title: "Akun",
+        body: `<div class="dashboard-page">
+          <div class="form-grid">
+            <div class="fact"><span>Pengguna</span><strong>${esc(user?.display_name || "-")}</strong></div>
+            <div class="fact"><span>Peran</span><strong>${badge(user?.role || "-", "accent")}</strong></div>
           </div>
-          <p class="section-note">
-            Angka ini dihitung dan ditegakkan oleh Postgres. Browser hanya menghitung selisih waktu
-            terhadap tenggat yang dikirim server, sehingga angka di layar, di Google Sheet, dan di
-            laporan selalu sama.
-          </p>`,
-          flush: false,
-        })}
-      </div>
+          <button type="button" class="btn btn-danger btn-block" id="logout">${icon("logout", 16)} Keluar</button>
+        </div>`,
+      })}
 
-      <div class="dashboard-page">
-        ${section({
-          eyebrow: "Lokasi",
-          title: "Gudang aktif",
-          body:
-            sites.length > 1
-              ? `<label>
-                   <span>Gudang dipantau</span>
-                   <select class="input" id="site-select">
-                     ${sites
-                       .map(
-                         (item) =>
-                           `<option value="${esc(item.code)}"${item.code === site?.code ? " selected" : ""}>
-                              ${esc(item.name)} (${esc(item.code)})
-                            </option>`,
-                       )
-                       .join("")}
-                   </select>
-                 </label>`
-              : `<p>Gudang aktif: <strong>${esc(site?.name || "-")}</strong> ${chip(site?.code || "-")}</p>
-                 <p class="section-note">
-                   Gudang lain diaktifkan dari database (<code>site_master.active</code>), tanpa deploy ulang.
-                 </p>`,
-        })}
-
-        ${cookieSection(user)}
-
-        ${refreshSection()}
-
-        ${sourceSection()}
-
-        ${section({
-          eyebrow: "Tampilan",
-          title: "Tema",
-          body: `<div class="table-actions">
-            ${["light", "dark", "system"]
-              .map(
-                (mode) =>
-                  `<button type="button" class="btn${currentTheme() === mode ? " btn-primary" : ""}" data-theme="${mode}">
-                     ${mode === "light" ? icon("sun", 16) : mode === "dark" ? icon("moon", 16) : ""}
-                     ${mode === "light" ? "Terang" : mode === "dark" ? "Gelap" : "Ikut sistem"}
-                   </button>`,
-              )
-              .join("")}
-          </div>`,
-        })}
-
-        ${section({
-          eyebrow: "Sesi",
-          title: "Akun",
-          body: `<div class="dashboard-page">
-            <div class="form-grid">
-              <div class="fact"><span>Pengguna</span><strong>${esc(user?.display_name || "-")}</strong></div>
-              <div class="fact"><span>Peran</span><strong>${badge(user?.role || "-", "accent")}</strong></div>
-            </div>
-            <p class="section-note">
-              Sinkronisasi terakhir: ${esc(store.state.lastSync ? formatFull(store.state.lastSync) : "belum pernah")}
-              · ${esc(store.state.rows.length)} tiket dimuat.
-            </p>
-            <button type="button" class="btn btn-danger btn-block" id="logout">${icon("logout", 16)} Keluar</button>
-          </div>`,
-        })}
-      </div>
+      ${section({
+        eyebrow: "Acuan",
+        title: "Target SLA bongkar",
+        className: "settings-wide",
+        body: `<div class="table-scroll">
+          <table class="tbl">
+            <thead><tr><th>Armada</th><th class="numeric">Target</th><th>Catatan</th></tr></thead>
+            <tbody>${FLEET_TYPES.map(
+              (fleet) => `<tr>
+                <td><strong>${esc(fleet.label)}</strong></td>
+                <td class="numeric mono">${esc(fleet.slaHours)} jam</td>
+                <td class="cell-wrap">${esc(fleet.note)}${
+                  SKU_TIERED_FLEETS.includes(fleet.value)
+                    ? ' <span class="chip">2 jam sampai 40 SKU, 4 jam di atas 40</span>'
+                    : ""
+                }</td>
+              </tr>`,
+            ).join("")}</tbody>
+          </table>
+        </div>
+        <p class="section-note">
+          Angka ini dihitung dan ditegakkan oleh Postgres. Browser hanya menghitung selisih waktu
+          terhadap tenggat yang dikirim server, sehingga angka di layar, di Google Sheet, dan di
+          laporan selalu sama.
+        </p>`,
+      })}
     </div>
   </div>`;
 

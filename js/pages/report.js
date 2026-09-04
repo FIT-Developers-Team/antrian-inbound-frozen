@@ -152,8 +152,10 @@ function table(list) {
       loading ? "" : "Ubah rentang tanggal, lalu tekan Terapkan.",
     );
   }
+  // `tbl-sticky`: tiga belas kolom tidak muat pada satu layar, dan baris yang
+  // digulir ke kanan kehilangan nomor antreannya justru saat ia dibutuhkan.
   return `<div class="table-scroll">
-    <table class="tbl">
+    <table class="tbl tbl-sticky">
       <thead><tr>${COLUMNS.map(([label]) => `<th>${esc(label)}</th>`).join("")}<th>SLA</th></tr></thead>
       <tbody>${list
         .map(

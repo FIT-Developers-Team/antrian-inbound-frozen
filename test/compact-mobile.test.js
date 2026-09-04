@@ -240,15 +240,28 @@ test("anak grid tidak dapat melebarkan halaman ke samping", () => {
   assert.match(css, /\.dashboard-page > \* \{\s*min-width: 0;/);
 });
 
-test("kolom eksplisit dinolkan sebelum kolom implisit dipakai", () => {
-  // `.metric-strip-four` mendefinisikan empat kolom EKSPLISIT `minmax(0, 1fr)`.
-  // Kolom eksplisit selalu menang atas `grid-auto-columns`, jadi tanpa
-  // penolan ini kartu metrik tetap diperas dan labelnya terpotong menjadi "ME"
-  // dan "DI" — dua kata yang tidak berarti apa pun.
+test("keempat metrik terlihat tanpa menggulir di ponsel", () => {
+  // Keputusan ini DIBALIK, dan alasannya dicatat supaya tidak dibalik kembali
+  // tanpa mengukur.
+  //
+  // Bentuk sebelumnya adalah satu baris menggulir berisi empat kolom selebar
+  // 138px. Terukur pada viewport 390px: `scrollWidth` 576 melawan `clientWidth`
+  // 357 — "Mendekati SLA" dan "Terlambat" seluruhnya di luar layar. Keduanya
+  // justru angka yang menjadi alasan papan ini dibuka, dan gulungan mendatar
+  // tanpa bilah yang mencolok tidak memberi satu pun petunjuk bahwa ia ada.
+  //
+  // Alasan asli lebar tetap itu benar pada masanya: empat kolom `1fr` pada
+  // 357px memberi 83 piksel per kartu dan memotong label menjadi "ME" dan "DI".
+  // Yang berubah adalah kartunya — `.metric-sub` sudah disembunyikan di lapisan
+  // ponsel, jadi isinya tinggal label dan angka, dan dua kolom memberi 175
+  // piksel per kartu. Ongkosnya satu baris tinggi tambahan.
   const strip = mobileLayer.slice(mobileLayer.indexOf(".metric-strip,"));
   const rule = strip.slice(0, strip.indexOf("}") + 1);
-  assert.match(rule, /grid-template-columns: none;/);
-  assert.match(rule, /grid-auto-columns: 138px;/);
+  assert.match(rule, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.doesNotMatch(rule, /overflow-x: auto/, "metrik tidak boleh menggulir mendatar lagi");
+  // Keterangan di bawah angka tetap disembunyikan: itulah yang membuat dua
+  // kolom cukup lapang.
+  assert.match(mobileLayer, /\.metric-sub \{\s*display: none;/);
 });
 
 test("nada tetap tenang: tidak ada palet atau gerak baru di lapisan ponsel", () => {

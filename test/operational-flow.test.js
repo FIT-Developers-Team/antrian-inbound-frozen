@@ -103,7 +103,11 @@ test("plat nomor wajib dan divalidasi sebelum tiket dikirim", () => {
 
 test("kesalahan plat ditandai lebih dari sekadar warna", () => {
   assert.match(register, /aria-invalid="true"/);
-  assert.match(register, /class="field-error"/);
+  // Slot galat sebaris kini sebuah primitif di ui.js — dipakai bersama oleh
+  // plat, jam kedatangan, dan daftar PO — bukan markup yang diulang di tiap
+  // medan halaman pendaftaran.
+  assert.match(register, /fieldError\(/);
+  assert.match(read("js/ui.js"), /class="field-error"/);
   assert.match(read("style.css"), /\.field-error::before/, "ikon teks menyertai warna merah");
 });
 

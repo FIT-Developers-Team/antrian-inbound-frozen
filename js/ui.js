@@ -127,6 +127,28 @@ export function progressBar(value, tone = "accent", label = "") {
   </span>`;
 }
 
+/**
+ * Penanda medan wajib.
+ *
+ * Bintangnya `aria-hidden`: pembaca layar sudah mendengar "wajib" dari atribut
+ * `required` pada kontrolnya, dan mendengar "bintang" di tiap label hanya
+ * menambah kebisingan.
+ */
+export function req() {
+  return `<b class="req" aria-hidden="true">*</b>`;
+}
+
+/**
+ * Galat sebaris, di sebelah medan yang salah.
+ *
+ * Toast tidak cukup untuk kegagalan validasi: ia muncul di sudut layar, jauh
+ * dari medan yang dimaksud, dan menghilang sebelum operator selesai membaca —
+ * lalu tidak menyisakan satu pun tanda tentang medan mana yang harus diperbaiki.
+ */
+export function fieldError(message, id) {
+  return message ? `<span class="field-error" id="${esc(id)}">${esc(message)}</span>` : "";
+}
+
 export function fact(label, value, { mono = false } = {}) {
   return `<div class="fact">
     <span>${esc(label)}</span>
@@ -155,7 +177,13 @@ export function fact(label, value, { mono = false } = {}) {
  * @param {{name: string, label: string, ticket: object|null, phase: string}[]} docks
  */
 export function dockRail(docks) {
-  return `<div class="dock-rail" role="list" aria-label="Status dok inbound">
+  // Jumlah dok diseberangkan ke CSS sebagai custom property, bukan dipaku di
+  // stylesheet. Gudang ini punya sembilan pintu, gudang lain enam; relnya harus
+  // membagi lebar menurut jumlah yang benar-benar ada, bukan menurut angka yang
+  // kebetulan berlaku ketika CSS-nya ditulis.
+  const count = Math.max(1, docks.length);
+  return `<div class="dock-rail" role="list" aria-label="Status ${count} dok inbound"
+    style="--dock-count:${count}">
     ${docks.map(dockTile).join("")}
   </div>`;
 }
@@ -170,7 +198,7 @@ function dockTile({ label, ticket, phase }) {
         <span class="dock-state">Kosong</span>
       </div>
       <div class="dock-occupant"><span class="dock-vendor">Siap menerima</span></div>
-      <span class="dock-bar"><i></i></span>
+      <span class="dock-bar" aria-hidden="true"><i></i></span>
     </article>`;
   }
 
@@ -192,9 +220,13 @@ function dockTile({ label, ticket, phase }) {
     </div>
     <div class="dock-occupant">
       <span class="dock-queue">${esc(ticket.queue_no || "-")}</span>
-      <span class="dock-vendor">${esc(ticket.vendor_name || "Vendor tidak tercatat")}</span>
+      <!-- Nama vendor kerap lebih panjang daripada ubinnya dan dipotong dengan
+           ellipsis; atribut title menyimpan nilai penuhnya, sehingga
+           "PT Sumber Pang…" masih dapat dipastikan tanpa membuka kartunya. -->
+      <span class="dock-vendor" title="${esc(ticket.vendor_name || "Vendor tidak tercatat")}"
+        >${esc(ticket.vendor_name || "Vendor tidak tercatat")}</span>
     </div>
-    <span class="dock-bar" ${bar}><i></i></span>
+    <span class="dock-bar" ${bar} aria-hidden="true"><i></i></span>
   </article>`;
 }
 
@@ -219,17 +251,39 @@ export function toast(message, kind = "success") {
  * Fokus dipindahkan ke dalam dialog saat dibuka dan dikembalikan ke pemicunya
  * saat ditutup, sehingga operator yang memakai keyboard tidak pernah kehilangan
  * posisi. Escape selalu menutup.
+ *
+ * Fokus juga TERKURUNG di dalamnya, dan itu bukan kemewahan aksesibilitas.
+ * `aria-modal` hanya berbicara kepada teknologi bantu; ia tidak menghentikan
+ * Tab. Tanpa kurungan, satu tekanan Tab dari tombol terakhir dialog memindahkan
+ * fokus ke tiga puluh sembilan kontrol di balik lapisan gelap — menu samping,
+ * kartu antrean, tombol "Selesai bongkar" milik tiket lain — semuanya tetap
+ * dapat ditekan meskipun tidak terlihat. Operator yang mengonfirmasi satu tiket
+ * dengan keyboard dapat menyelesaikan tiket yang sama sekali lain.
  * ----------------------------------------------------------------------- */
 let openDialog = null;
+
+/** Kontrol yang benar-benar dapat menerima Tab, dalam urutan dokumen. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+  'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function focusableIn(root) {
+  return [...root.querySelectorAll(FOCUSABLE)].filter(
+    (element) => element.offsetParent !== null || element === document.activeElement,
+  );
+}
+
+let dialogSeq = 0;
 
 export function dialog({ title, body, confirmLabel = "Simpan", confirmTone = "primary", onConfirm }) {
   closeDialog();
   const opener = document.activeElement;
   const backdrop = document.createElement("div");
   backdrop.className = "modal-backdrop";
-  backdrop.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+  const titleId = `modal-title-${(dialogSeq += 1)}`;
+  backdrop.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="${titleId}">
     <header class="modal-head">
-      <h2>${esc(title)}</h2>
+      <h2 id="${titleId}">${esc(title)}</h2>
       <button type="button" class="icon-btn" data-close aria-label="Tutup">${icon("x", 18)}</button>
     </header>
     <div class="modal-body">${body}</div>
@@ -239,9 +293,15 @@ export function dialog({ title, body, confirmLabel = "Simpan", confirmTone = "pr
     </footer>
   </div>`;
 
+  // Sisa halaman dilepas dari pohon aksesibilitas DAN dari urutan Tab. `inert`
+  // melakukan keduanya sekaligus; kelas `modal-open` yang sudah ada hanya
+  // mengunci gulir.
+  const shell = document.querySelector(".app-shell");
+  shell?.setAttribute("inert", "");
+
   document.body.append(backdrop);
   document.body.classList.add("modal-open");
-  openDialog = { backdrop, opener };
+  openDialog = { backdrop, opener, shell };
 
   backdrop.querySelectorAll("[data-close]").forEach((button) => {
     button.addEventListener("click", closeDialog);
@@ -272,12 +332,32 @@ export function dialog({ title, body, confirmLabel = "Simpan", confirmTone = "pr
 }
 
 function onDialogKeydown(event) {
-  if (event.key === "Escape" && openDialog) closeDialog();
+  if (!openDialog) return;
+  if (event.key === "Escape") return closeDialog();
+  if (event.key !== "Tab") return undefined;
+
+  // `inert` sudah menutup jalan keluar pada browser yang mendukungnya; kurungan
+  // ini yang membuat Tab melingkar di dalam dialog alih-alih berhenti di ujung.
+  const items = focusableIn(openDialog.backdrop);
+  if (!items.length) return undefined;
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement;
+
+  if (event.shiftKey && (active === first || !openDialog.backdrop.contains(active))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+  return undefined;
 }
 
 export function closeDialog() {
   if (!openDialog) return;
   document.removeEventListener("keydown", onDialogKeydown);
+  openDialog.shell?.removeAttribute("inert");
   openDialog.backdrop.remove();
   document.body.classList.remove("modal-open");
   openDialog.opener?.focus?.();
