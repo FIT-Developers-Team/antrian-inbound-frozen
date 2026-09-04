@@ -68,12 +68,29 @@ test("papan hanya mengirim kolom yang benar-benar dibaca", () => {
   assert.match(snapshot, /jsonb_build_object\(\s*'ticket_id', ticket_id/);
 
   // Kolom yang tidak pernah dipakai tidak boleh diam-diam kembali.
-  ["'registered_by'", "'row_updated_at'", "'created_at'", "'ticket_type'", "'slot'"].forEach((column) => {
-    assert.ok(!snapshot.includes(column), `${column} tidak dibaca UI dan tidak boleh dikirim`);
+  //
+  // `driver_phone` sempat berada di daftar "wajib dikirim" di bawah, dan itu
+  // keliru: satu-satunya kemunculannya di frontend adalah pada BADAN PERMINTAAN
+  // saat tiket dibuat (register.js), bukan pada pembacaan snapshot. Permintaan
+  // dan jawaban tertukar, dan nomor telepon driver ikut disiarkan ke setiap
+  // tablet yang membuka papan tanpa satu pun layar yang menampilkannya.
+  // Diperiksa pada PROYEKSI BARIS saja, bukan seluruh fungsi: katalog gudang di
+  // dalam fungsi yang sama memang membawa site_code, dan itu bukan muatan per
+  // tiket.
+  const rowProjection = snapshot.slice(
+    snapshot.indexOf("select coalesce(jsonb_agg(jsonb_build_object("),
+    snapshot.indexOf("  sites as ("),
+  );
+  [
+    "'registered_by'", "'row_updated_at'", "'created_at'", "'ticket_type'", "'slot'",
+    "'driver_phone'", "'site_code'", "'operational_date'",
+  ].forEach((column) => {
+    assert.ok(!rowProjection.includes(column), `${column} tidak dibaca UI dan tidak boleh dikirim per baris`);
   });
 
-  // Tetapi yang dipakai harus tetap ada.
-  ["'queue_no'", "'sla_deadline_at'", "'call_count'", "'po_numbers'", "'driver_phone'"].forEach((column) => {
+  // Tetapi yang dipakai harus tetap ada. `driver_name` termasuk: kotak
+  // pencarian papan menyaring dengannya.
+  ["'queue_no'", "'sla_deadline_at'", "'call_count'", "'po_numbers'", "'driver_name'"].forEach((column) => {
     assert.ok(snapshot.includes(column), `${column} dipakai UI dan wajib dikirim`);
   });
 });

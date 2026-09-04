@@ -389,15 +389,16 @@ export function searchPoMaster(query, limit = 8) {
   return apiGet("po_search", { q: query, limit });
 }
 
-/**
- * Master PO utuh.
+/*
+ * fetchPoMaster() pernah ada di sini dan sudah dibuang.
  *
- * Tidak lagi dipakai layar pendaftaran; disimpan untuk perkakas yang benar-
- * benar membutuhkan seluruh isinya. Payloadnya besar, jadi selalu ber-ETag.
+ * Ia berhenti dipakai ketika pencarian PO pindah ke Postgres, lalu bertahan
+ * sebagai pembungkus "untuk perkakas yang membutuhkan seluruh isinya" — padahal
+ * modul ini hanya dimuat browser, dan tidak ada perkakas browser. Yang tersisa
+ * hanyalah satu pemanggilan 3,4 MB yang tinggal sebaris jaraknya dari kode yang
+ * tidak pernah memaksudkannya. Aksi `po_master` sendiri tetap ada di server bagi
+ * pemakai di luar aplikasi ini.
  */
-export function fetchPoMaster() {
-  return apiGet("po_master", {}, { useEtag: true });
-}
 
 /** Riwayat lengkap untuk halaman Laporan dan ekspor CSV. */
 export function fetchHistory(from, to) {

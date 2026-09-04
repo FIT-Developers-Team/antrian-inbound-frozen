@@ -175,11 +175,53 @@ karena itu akan memundurkan deadline SLA secara diam-diam.
 
 ## Kontrak performa
 
-| Action         | Isi                                                | Frekuensi        | Cache |
-| -------------- | -------------------------------------------------- | ---------------- | ----- |
-| `board`        | Satu baris per tiket + gate + katalog site          | 15 detik         | ETag  |
-| `po_master`    | Master PO Superset gudang aktif                     | Saat buka Daftar | ETag  |
-| `history`      | Riwayat pada rentang tanggal, dibatasi 5000 baris   | Manual           | —     |
+Satu baris per halaman: apa yang diminta, seberapa sering, dan berapa kolom yang
+benar-benar dibaca. Kolom terakhir itu yang paling mudah menyimpang, dan
+`test/payload-contract.test.js` menjaganya — ia membaca daftar kolom dari
+`db/schema.sql` DAN dari modul halamannya, lalu menolak bila keduanya berbeda.
+
+| Halaman     | Action            | Frekuensi                        | Cache | Kolom baris |
+| ----------- | ----------------- | -------------------------------- | ----- | ----------- |
+| semua       | `events`          | satu aliran SSE per sesi          | —     | —           |
+| semua       | `board`           | seketika lewat SSE; polling 60 dtk saat saluran hidup, 15 dtk saat mati | ETag | 19 |
+| Daftar      | `po_search`       | saat mengetik, ditunda 180 ms     | —     | maks 8 baris |
+| Laporan     | `history`         | saat rentang berubah / Terapkan   | —     | 11, batas 5.000 baris |
+| Analitik    | `lead_time`       | saat rentang berubah / Terapkan   | —     | agregat |
+| Analitik    | `vendor_stats`    | saat rentang berubah / Terapkan   | —     | agregat, maks 20 vendor |
+| Pengaturan  | `settings_status` | sekali per kunjungan, ADMIN/DEVELOPER | —  | bentuk cookie, bukan isinya |
+
+`po_master` **tidak dipanggil aplikasi ini.** Ia sempat tercantum di sini sebagai
+"saat buka Daftar", dan itu berhenti benar ketika pencarian PO pindah ke Postgres
+— pembungkus `fetchPoMaster()` di browser sudah dibuang. Aksinya tetap ada di
+server untuk pemakai di luar aplikasi; muatannya 3,4 MB.
+
+### Kolom yang dikirim adalah kolom yang dibaca
+
+Dua kali muatan terbesar aplikasi ini dikirim sebagai `to_jsonb(baris_view)`,
+yaitu ketiga puluh tiga kolom view `inbound_board`, dan dua kali penerimanya
+hanya membaca sebagian kecil:
+
+| Muatan    | Dikirim dulu | Dibaca | Sesudah proyeksi disebut satu per satu |
+| --------- | ------------ | ------ | -------------------------------------- |
+| `board`   | 22 kolom     | 19     | −11% mentah (gzip sudah menutupi sisanya) |
+| `history` | 33 kolom     | 11     | 4,99 MB → 1,85 MB mentah; 263 KB → 119 KB gzip |
+
+Pada `history` yang menentukan bukan ukuran kabelnya melainkan ukuran mentahnya:
+tablet gudang harus mengurai seluruhnya dan menyimpan lima ribu objek berisi tiga
+puluh tiga properti. Itulah pembekuan yang pernah dialami halaman Laporan.
+
+Tiga kolom papan yang ikut dibuang punya alasan tersendiri:
+
+- `site_code` dan `operational_date` — sudah ada di tingkat payload sebagai satu
+  nilai; mengulangnya per baris tidak menambah apa pun.
+- `driver_phone` — dikirim UI saat MEMBUAT tiket, tidak pernah dibaca kembali.
+  Nomor telepon driver juga data pribadi: menyiarkannya ke setiap tablet yang
+  membuka papan, tanpa satu pun layar yang menampilkannya, adalah paparan tanpa
+  imbalan.
+
+Larik `checkers` juga berhenti dikirim. Ia dibangun dari `checker_master` pada
+setiap snapshot — tiap lima belas detik, per tablet — dan tidak pernah dibaca
+satu baris kode UI pun. Tabelnya tetap ada dan tetap di-seed.
 
 ### Satu baris per tiket
 

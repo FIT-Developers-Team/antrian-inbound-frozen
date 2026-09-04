@@ -539,8 +539,10 @@ returns jsonb language sql stable as $$
     'age_seconds', case when master.last_synced_at is not null
                         then extract(epoch from (now() - master.last_synced_at))::int end,
     'last_run_status', (select status from last_run),
-    'last_run_at', (select finished_at from last_run),
-    'last_run_rows', (select written_count from last_run),
+    -- 'last_run_at' dan 'last_run_rows' pernah ada di sini dan tidak pernah
+    -- dibaca: layar Pengaturan menampilkan umur sumber (age_seconds) dan jumlah
+    -- PO tersimpan (total_po), bukan stempel waktu dan hitungan baris milik
+    -- satu proses sync.
     'last_run_error', (select error_message from last_run),
     -- Catatan non-fatal: sync yang BERHASIL tetapi hasilnya perlu dibaca dengan
     -- hati-hati, mis. chart yang mengirim beberapa baris per PO dengan angka
@@ -615,18 +617,27 @@ returns jsonb language sql stable as $$
     -- Kolom-kolom itu tetap dihitung view — fingerprint memakai row_updated_at,
     -- dan sla_stopped_at diturunkan dari done_unloading_at. Yang berhenti di
     -- sini hanyalah pengirimannya lewat jaringan.
+    --
+    -- Tiga lagi menyusul setelah audit muatan berikutnya:
+    --
+    --   site_code         Papan sudah dikunci pada satu gudang; kodenya ada di
+    --                     tingkat payload, bukan perlu diulang tiap baris.
+    --   operational_date  Sama — ada di tingkat payload sebagai satu nilai.
+    --   driver_phone      Dikirim UI saat MEMBUAT tiket, tidak pernah dibaca
+    --                     kembali dari snapshot. Nomor telepon driver juga data
+    --                     pribadi: menyiarkannya ke setiap tablet yang membuka
+    --                     papan, tiap lima belas detik, tanpa satu pun layar
+    --                     yang menampilkannya, adalah paparan tanpa imbalan.
     select coalesce(jsonb_agg(jsonb_build_object(
              'ticket_id', ticket_id,
              'queue_no', queue_no,
              'status', status,
-             'site_code', site_code,
              'vendor_name', vendor_name,
              'fleet_type', fleet_type,
              'plat_number', plat_number,
+             -- Dibaca kotak pencarian papan; nomor teleponnya tidak.
              'driver_name', driver_name,
-             'driver_phone', driver_phone,
              'gate', gate,
-             'operational_date', operational_date,
              'arrived_at', arrived_at,
              'call_count', call_count,
              'start_unloading_at', start_unloading_at,
@@ -654,11 +665,6 @@ returns jsonb language sql stable as $$
     select coalesce(jsonb_agg(gate_name order by site_code, gate_index), '[]'::jsonb) as rows
       from inbound_active_gates()
   ),
-  checkers as (
-    select coalesce(jsonb_agg(jsonb_build_object('checker_id', mp_id, 'checker_name', checker_name)
-           order by checker_name), '[]'::jsonb) as rows
-      from checker_master where active
-  ),
   -- `materialized` di sini menghemat lebih banyak daripada yang terlihat.
   --
   -- Tanpanya, Postgres menyisipkan pemanggilan fungsi ini ke dalam kueri luar,
@@ -677,7 +683,9 @@ returns jsonb language sql stable as $$
     'rows', payload.rows,
     'sites', sites.rows,
     'gates', gates.rows,
-    'checkers', checkers.rows,
+    -- 'checkers' pernah ada di sini. Tidak satu pun layar pernah membacanya:
+    -- ia dibangun dari checker_master pada SETIAP snapshot — tiap lima belas
+    -- detik, per tablet — lalu dibuang penerimanya tanpa dilihat.
     'source', freshness.payload,
     -- Kesegaran sumber ikut di fingerprint. Tanpa itu, sync Superset baru tidak
     -- mengubah ETag selama tidak ada tiket berubah, dan indikator layar membeku.
@@ -685,7 +693,7 @@ returns jsonb language sql stable as $$
       payload.row_count::text || '|' ||
       coalesce(payload.max_updated_at::text, '-') || '|' ||
       coalesce(freshness.payload->>'last_synced_at', '-'))
-  ) from payload, sites, gates, checkers, freshness;
+  ) from payload, sites, gates, freshness;
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -717,11 +725,40 @@ returns jsonb language sql stable as $$
      order by b.created_at desc
      limit 5000
   )
+  -- Kolom disebut satu per satu, TIDAK memakai to_jsonb(capped).
+  --
+  -- Pelajaran yang sama sudah diterapkan pada snapshot papan dan tidak pernah
+  -- ikut dibawa ke sini — padahal riwayatlah muatan terbesar aplikasi ini.
+  -- `to_jsonb` atas baris view mengirim ketiga puluh tiga kolomnya; halaman
+  -- Laporan membaca sebelas. Dua puluh dua sisanya dikirim, diurai, dan
+  -- dijadikan properti objek JavaScript hanya untuk langsung dibuang.
+  --
+  -- Terukur pada batas 5.000 baris: 4,99 MB turun menjadi 1,85 MB mentah
+  -- (263 KB menjadi 119 KB setelah gzip). Yang mentah itu yang menentukan:
+  -- tablet gudang harus mengurai seluruhnya dan menyimpan lima ribu objek
+  -- berisi tiga puluh tiga properti, dan itulah pembekuan yang sudah pernah
+  -- dialami halaman ini.
+  --
+  -- Bila Laporan suatu saat menampilkan kolom baru, kolom itu ditambahkan DI
+  -- SINI juga — daftar ini adalah kontraknya, dan test/payload-contract.test.js
+  -- menjaga keduanya tetap sepadan.
   select jsonb_build_object(
     'from', (select from_date::text from bounds),
     'to', (select to_date::text from bounds),
     'truncated', (select count(*) from capped) >= 5000,
-    'rows', coalesce((select jsonb_agg(to_jsonb(capped) order by capped.created_at desc) from capped), '[]'::jsonb));
+    'rows', coalesce((select jsonb_agg(jsonb_build_object(
+              'queue_no', queue_no,
+              'status', status,
+              'vendor_name', vendor_name,
+              'fleet_type', fleet_type,
+              'plat_number', plat_number,
+              'gate', gate,
+              'arrived_at', arrived_at,
+              'start_unloading_at', start_unloading_at,
+              'sla_stopped_at', sla_stopped_at,
+              'sla_target_hours', sla_target_hours,
+              'sla_deadline_at', sla_deadline_at
+            ) order by capped.created_at desc) from capped), '[]'::jsonb));
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -1350,10 +1387,12 @@ returns jsonb language sql stable as $fn$
   ),
   by_fleet as (
     select coalesce(jsonb_agg(row order by sort_tickets desc), '[]'::jsonb) as payload from (
+      -- 'wait_p50' pernah ada di sini. Waktu tunggu per armada tidak pernah
+      -- ditampilkan: grafik armada membandingkan lama BONGKAR terhadap target,
+      -- dan waktu tunggu punya bagiannya sendiri di komposisi harian.
       select count(*) as sort_tickets, jsonb_build_object(
         'fleet', fleet,
         'tickets', count(*),
-        'wait_p50', round(percentile_cont(0.5) within group (order by wait_minutes))::int,
         'unload_p50', round(percentile_cont(0.5) within group (order by unload_minutes))::int,
         'unload_p90', round(percentile_cont(0.9) within group (order by unload_minutes))::int,
         'target_hours', max(sla_target_hours),
@@ -1612,7 +1651,7 @@ returns jsonb language sql stable as $fn$
   scoped as (
     select
       coalesce(nullif(btrim(b.vendor_name), ''), '(tanpa vendor)') as vendor,
-      b.status, b.gate, b.total_sku, b.total_qty, b.expired_reason,
+      b.status, b.gate, b.total_sku, b.expired_reason,
       case when b.arrived_at is not null and b.sla_started_at is not null
            then extract(epoch from (b.sla_started_at - b.arrived_at)) / 60 end as wait_minutes,
       case when b.sla_started_at is not null and b.sla_stopped_at is not null
@@ -1632,17 +1671,18 @@ returns jsonb language sql stable as $fn$
           -- vendor yang datang tiga kali dan menahan dok empat jam tiap kali.
           coalesce(sum(unload_minutes), 0) as sort_minutes,
           count(*) as sort_tickets,
+          -- 'completed' dan 'total_qty' pernah ada di sini tanpa pembaca: tabel
+          -- vendor menampilkan tiket, waktu dok, persentil, SKU, batal, dan
+          -- kepatuhan SLA — bukan jumlah selesai maupun kuantitas.
           jsonb_build_object(
             'vendor', vendor,
             'tickets', count(*),
-            'completed', count(*) filter (where status = 'COMPLETED'),
             'cancelled', count(*) filter (where status = 'EXPIRED'),
             'dock_minutes', round(coalesce(sum(unload_minutes), 0))::int,
             'wait_p50', round(percentile_cont(0.5) within group (order by wait_minutes))::int,
             'unload_p50', round(percentile_cont(0.5) within group (order by unload_minutes))::int,
             'unload_p90', round(percentile_cont(0.9) within group (order by unload_minutes))::int,
             'total_sku', coalesce(sum(total_sku), 0)::int,
-            'total_qty', round(coalesce(sum(total_qty), 0))::int,
             'sla_judged', count(*) filter (where met_sla is not null),
             'sla_met', count(*) filter (where met_sla)
           ) as row

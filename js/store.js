@@ -22,7 +22,6 @@ const listeners = new Set();
 export const state = {
   rows: [],
   gates: [],
-  checkers: [],
   operationalDate: "",
   /**
    * Kesegaran rantai Superset (PGS 160) → superset_po_master, dikirim server
@@ -151,7 +150,6 @@ export async function refresh({ silent = false } = {}) {
 
     state.rows = Array.isArray(payload?.rows) ? payload.rows : [];
     state.gates = Array.isArray(payload?.gates) ? payload.gates : [];
-    state.checkers = Array.isArray(payload?.checkers) ? payload.checkers : [];
     state.operationalDate = payload?.operational_date || "";
     state.source = payload?.source || null;
     applyServerCatalog({ sites: payload?.sites, gates: payload?.gates });
